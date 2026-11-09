@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Gemini Summarizer</string>
+    <string name="nav_home">Summarizer</string>
+    <string name="nav_accounts">Accounts</string>
+    <string name="nav_models">Models</string>
+    <string name="nav_history">History</string>
+    <string name="nav_settings">Settings</string>
+</resources>
