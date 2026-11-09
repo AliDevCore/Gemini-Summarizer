@@ -27,8 +27,9 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -36,7 +37,7 @@ jobs:
       - name: Run Unit Tests
         run: ./gradlew test --stacktrace
 
-      - name: Build Debug & Release APK
+      - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
       - name: Determine Release Tag
@@ -53,7 +54,7 @@ jobs:
           fi
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Rename APK for Release
+      - name: Prepare Release APK Artifact
         run: |
           mkdir -p release-artifacts
           find app/build/outputs/apk/ -name "*.apk" -exec cp {} release-artifacts/Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk \;
@@ -64,17 +65,17 @@ jobs:
           tag_name: ${{ steps.tag_generator.outputs.TAG_NAME }}
           name: "Release ${{ steps.tag_generator.outputs.TAG_NAME }}"
           body: |
-            ### 🚀 انتشار خودکار نسخه جدید Gemini Summarizer
+            ### 🚀 Gemini Summarizer Automated Release
             
-            - **نسخه (Tag):** `${{ steps.tag_generator.outputs.TAG_NAME }}`
-            - **شاخه:** `${{ github.ref_name }}`
-            - **فایل ضمیمه:** فایل نصبی APK آماده نصب روی اندروید ۸ و بالاتر.
+            - **Release Tag:** `${{ steps.tag_generator.outputs.TAG_NAME }}`
+            - **Target Branch:** `${{ github.ref_name }}`
+            - **Asset:** Standalone Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
             
-            #### تغییرات:
-            - ایجاد و به‌روزرسانی خودکار توسط GitHub Actions CI/CD.
+            #### Highlights:
+            - Built, tested, and generated via GitHub Actions CI/CD.
+            - Compatible with Android 8.0 (API 26) through Android 14+ (API 34).
           files: release-artifacts/*.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
