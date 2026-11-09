@@ -194,7 +194,18 @@ class GeminiApiClient {
                             }
                         }
 
-                        if (supportsText && !cleanId.contains("embedding") && !cleanId.contains("aqa")) {
+                        val isDeprecated = cleanId.contains("2.5") ||
+                                cleanId.contains("1.0") ||
+                                cleanId.endsWith("-001") ||
+                                cleanId.endsWith("-002") ||
+                                cleanId.contains("embedding") ||
+                                cleanId.contains("aqa") ||
+                                cleanId.contains("imagen") ||
+                                cleanId.contains("learnlm") ||
+                                cleanId.contains("tts") ||
+                                cleanId.contains("whisper")
+
+                        if (supportsText && !isDeprecated) {
                             result.add(
                                 DiscoveredModel(
                                     id = cleanId,

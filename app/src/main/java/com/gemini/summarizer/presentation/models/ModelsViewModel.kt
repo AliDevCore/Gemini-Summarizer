@@ -40,10 +40,16 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadModels() {
         viewModelScope.launch {
+            // Clean up deprecated models from previous app versions
+            database.modelDao().deleteDeprecatedModels()
+
             // Ensure default models exist if database was empty
             if (database.modelDao().getModelsCount() == 0) {
                 database.modelDao().insertModels(AppDatabase.getDefaultModels())
             }
+
+            // Ensure priority order is based on descending version
+            applyAutoPrioritySorting()
 
             database.modelDao().getAllModelsFlow().collectLatest { list ->
                 _uiState.value = _uiState.value.copy(models = list)
@@ -74,6 +80,18 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun selectAllModels() {
+        viewModelScope.launch {
+            database.modelDao().enableAllModels()
+        }
+    }
+
+    fun deselectAllModels() {
+        viewModelScope.launch {
+            database.modelDao().disableAllModels()
+        }
+    }
+
     fun moveModelPriority(model: ModelEntity, moveUp: Boolean) {
         viewModelScope.launch {
             val currentPriority = model.priority
@@ -83,20 +101,33 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun extractVersionScore(id: String): Double {
+        if (id.contains("latest")) return 2.99
+        val match = Regex("""(?:gemini-)?(\d+)(?:\.(\d+))?""").find(id)
+        if (match != null) {
+            val major = match.groupValues[1].toDoubleOrNull() ?: 0.0
+            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toDoubleOrNull() ?: 0.0
+            return major + (minor / 10.0)
+        }
+        return 0.0
+    }
+
+    private fun extractTierScore(id: String): Int {
+        return when {
+            id.contains("pro") -> 1
+            id.contains("flash-lite") || id.contains("lite") -> 3
+            id.contains("flash") -> 2
+            else -> 4
+        }
+    }
+
     private suspend fun applyAutoPrioritySorting() {
-        // Auto priority rule: Strongest / Newest first (2.5-pro -> 2.0-flash -> 1.5-pro -> 1.5-flash -> flash-lite / 8b)
-        val currentModels = database.modelDao().getEnabledTextModels()
-        val sorted = currentModels.sortedWith(
-            compareBy<ModelEntity> { m ->
-                when {
-                    m.id.contains("2.5") -> 1
-                    m.id.contains("2.0") -> 2
-                    m.id.contains("1.5-pro") -> 3
-                    m.id.contains("1.5-flash") && !m.id.contains("8b") -> 4
-                    m.id.contains("8b") || m.id.contains("lite") -> 5
-                    else -> 6
-                }
-            }.thenBy { m -> !m.isStable }
+        // Sort descending by model version: 3.8 > 3.7 > 3.6 > 3.5 > 3.1 > 3.0
+        val allModels = database.modelDao().getAllModelsList()
+        val sorted = allModels.sortedWith(
+            compareByDescending<ModelEntity> { m -> extractVersionScore(m.id) }
+                .thenBy { m -> extractTierScore(m.id) }
+                .thenBy { m -> !m.isStable }
         )
 
         for ((index, item) in sorted.withIndex()) {
@@ -129,6 +160,20 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 when (val result = apiClient.listModels(rawKey)) {
                     is GeminiApiResult.Success -> {
                         for (discovered in result.data) {
+                            val cleanId = discovered.id
+                            val isDeprecated = cleanId.contains("2.5") ||
+                                    cleanId.contains("1.0") ||
+                                    cleanId.endsWith("-001") ||
+                                    cleanId.endsWith("-002") ||
+                                    cleanId.contains("embedding") ||
+                                    cleanId.contains("aqa") ||
+                                    cleanId.contains("imagen") ||
+                                    cleanId.contains("learnlm") ||
+                                    cleanId.contains("tts") ||
+                                    cleanId.contains("whisper")
+
+                            if (isDeprecated) continue
+
                             val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
                             val modelEntity = ModelEntity(
                                 id = discovered.id,
@@ -146,13 +191,13 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                             discoveredCount++
                         }
 
-                        if (_uiState.value.isAutoPriorityEnabled) {
-                            applyAutoPrioritySorting()
-                        }
+                        // Always purge any deprecated models and re-apply version descending priority
+                        database.modelDao().deleteDeprecatedModels()
+                        applyAutoPrioritySorting()
 
                         _uiState.value = _uiState.value.copy(
                             isRefreshing = false,
-                            statusMessage = "Successfully updated model inventory ($discoveredCount models verified).",
+                            statusMessage = "Successfully updated model inventory ($discoveredCount active models verified).",
                             errorMessage = null
                         )
                         return@launch

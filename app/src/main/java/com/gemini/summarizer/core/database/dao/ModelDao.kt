@@ -9,6 +9,9 @@ interface ModelDao {
     @Query("SELECT * FROM gemini_models ORDER BY priority ASC, id ASC")
     fun getAllModelsFlow(): Flow<List<ModelEntity>>
 
+    @Query("SELECT * FROM gemini_models ORDER BY priority ASC, id ASC")
+    suspend fun getAllModelsList(): List<ModelEntity>
+
     @Query("SELECT * FROM gemini_models WHERE isEnabled = 1 AND supportsTextGeneration = 1 ORDER BY priority ASC")
     suspend fun getEnabledTextModels(): List<ModelEntity>
 
@@ -23,6 +26,15 @@ interface ModelDao {
 
     @Query("UPDATE gemini_models SET isEnabled = :isEnabled WHERE id = :modelId")
     suspend fun setModelEnabled(modelId: String, isEnabled: Boolean)
+
+    @Query("UPDATE gemini_models SET isEnabled = 1 WHERE supportsTextGeneration = 1")
+    suspend fun enableAllModels()
+
+    @Query("UPDATE gemini_models SET isEnabled = 0")
+    suspend fun disableAllModels()
+
+    @Query("DELETE FROM gemini_models WHERE id LIKE '%2.5%' OR id LIKE '%1.0%' OR id LIKE '%-001' OR id LIKE '%-002' OR id LIKE '%embedding%' OR id LIKE '%aqa%' OR id LIKE '%imagen%' OR id LIKE '%learnlm%'")
+    suspend fun deleteDeprecatedModels()
 
     @Query("UPDATE gemini_models SET priority = :priority WHERE id = :modelId")
     suspend fun setModelPriority(modelId: String, priority: Int)
