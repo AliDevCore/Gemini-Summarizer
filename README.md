@@ -15,13 +15,13 @@
 
 <p align="center">
   <a href="https://github.com/user-attachments/assets/90077a7f-e56a-4473-a6f3-725c3bc7de98">
-    <img src="https://github.com/user-attachments/assets/90077a7f-e56a-4473-a6f3-725c3bc7de98" width="32%" alt="1">
+    <img src="https://github.com/user-attachments/assets/90077a7f-e56a-4473-a6f3-725c3bc7de98" width="30%" alt="1" style="margin: 5px;">
   </a>
   <a href="https://github.com/user-attachments/assets/dca877be-eb5e-4944-b046-46ce092c9f16">
-    <img src="https://github.com/user-attachments/assets/dca877be-eb5e-4944-b046-46ce092c9f16" width="32%" alt="2">
+    <img src="https://github.com/user-attachments/assets/dca877be-eb5e-4944-b046-46ce092c9f16" width="30%" alt="2" style="margin: 5px;">
   </a>
   <a href="https://github.com/user-attachments/assets/d7759c02-574d-46f3-8cb9-95ac3ea3d6d9">
-    <img src="https://github.com/user-attachments/assets/d7759c02-574d-46f3-8cb9-95ac3ea3d6d9" width="32%" alt="3">
+    <img src="https://github.com/user-attachments/assets/d7759c02-574d-46f3-8cb9-95ac3ea3d6d9" width="30%" alt="3" style="margin: 5px;">
   </a>
 </p>
 
