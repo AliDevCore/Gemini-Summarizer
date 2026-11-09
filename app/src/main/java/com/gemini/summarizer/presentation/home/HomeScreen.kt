@@ -1,11 +1,16 @@
 package com.gemini.summarizer.presentation.home
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -16,10 +21,29 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+
+class DynamicCreateDocumentContract : ActivityResultContract<Pair<String, String>, Uri?>() {
+    override fun createIntent(context: Context, input: Pair<String, String>): Intent {
+        val (defaultName, mimeType) = input
+        return Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mimeType)
+            .putExtra(Intent.EXTRA_TITLE, defaultName)
+    }
+
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? {
+        return if (intent == null || resultCode != Activity.RESULT_OK) null else intent.data
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -35,10 +59,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         uri?.let { viewModel.processFileUri(it) }
     }
 
-    // Export File Launcher
+    // Export File Launcher with exact MIME types to prevent accidental .txt suffixes
     var pendingExportFormat by remember { mutableStateOf("txt") }
-    val exportFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain")
+    val dynamicExportLauncher = rememberLauncherForActivityResult(
+        contract = DynamicCreateDocumentContract()
     ) { uri ->
         uri?.let { viewModel.exportSummary(it, pendingExportFormat) }
     }
@@ -247,6 +271,12 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
             // Results Section
             uiState.summaryResult?.let { result ->
+                val isRtlText = remember(result.summaryText, uiState.targetLanguage) {
+                    uiState.targetLanguage.equals("persian", ignoreCase = true) ||
+                    uiState.targetLanguage.equals("arabic", ignoreCase = true) ||
+                    result.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+                }
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
@@ -290,58 +320,64 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
                         HorizontalDivider()
 
-                        SelectionContainer {
-                            Text(
-                                text = result.summaryText,
-                                style = MaterialTheme.typography.bodyLarge,
-                                lineHeight = MaterialTheme.typography.bodyLarge.lineHeight
-                            )
+                        // RTL or LTR aware display box
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides (if (isRtlText) LayoutDirection.Rtl else LayoutDirection.Ltr)
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = result.summaryText,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    lineHeight = 26.sp,
+                                    textAlign = if (isRtlText) TextAlign.Right else TextAlign.Left,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
 
                         HorizontalDivider()
 
-                        // Export Options
+                        // Export Options with stylish icons and proper MIME type launchers
                         Text("Export Summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    pendingExportFormat = "txt"
-                                    exportFileLauncher.launch("Summary.txt")
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("TXT")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    pendingExportFormat = "md"
-                                    exportFileLauncher.launch("Summary.md")
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("MD")
-                            }
-                            OutlinedButton(
+                            ExportIconButton(
+                                icon = Icons.Default.PictureAsPdf,
+                                label = "PDF",
                                 onClick = {
                                     pendingExportFormat = "pdf"
-                                    exportFileLauncher.launch("Summary.pdf")
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("PDF")
-                            }
-                            OutlinedButton(
+                                    dynamicExportLauncher.launch(Pair("Summary.pdf", "application/pdf"))
+                                }
+                            )
+                            ExportIconButton(
+                                icon = Icons.Default.Description,
+                                label = "Word",
                                 onClick = {
                                     pendingExportFormat = "docx"
-                                    exportFileLauncher.launch("Summary.docx")
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("DOCX")
-                            }
+                                    dynamicExportLauncher.launch(
+                                        Pair("Summary.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                                    )
+                                }
+                            )
+                            ExportIconButton(
+                                icon = Icons.Default.Article,
+                                label = "Markdown",
+                                onClick = {
+                                    pendingExportFormat = "md"
+                                    dynamicExportLauncher.launch(Pair("Summary.md", "text/markdown"))
+                                }
+                            )
+                            ExportIconButton(
+                                icon = Icons.Default.TextSnippet,
+                                label = "Text",
+                                onClick = {
+                                    pendingExportFormat = "txt"
+                                    dynamicExportLauncher.launch(Pair("Summary.txt", "text/plain"))
+                                }
+                            )
                         }
                     }
                 }
@@ -349,5 +385,35 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
             Spacer(Modifier.height(32.dp))
         }
+    }
+}
+
+@Composable
+fun ExportIconButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(4.dp)
+    ) {
+        FilledTonalIconButton(
+            onClick = onClick,
+            modifier = Modifier.size(50.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium
+        )
     }
 }

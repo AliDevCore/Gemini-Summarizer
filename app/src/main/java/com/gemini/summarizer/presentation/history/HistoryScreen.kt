@@ -18,8 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gemini.summarizer.core.database.entity.HistoryEntity
 import java.text.SimpleDateFormat
@@ -119,6 +123,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
         // Detail Modal Dialog
         uiState.selectedItem?.let { item ->
             val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(item.timestamp))
+            val isRtlText = item.targetLanguage.equals("persian", ignoreCase = true) ||
+                            item.targetLanguage.equals("arabic", ignoreCase = true) ||
+                            item.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+
             AlertDialog(
                 onDismissRequest = { viewModel.selectHistoryItem(null) },
                 title = { Text(item.title, fontWeight = FontWeight.Bold) },
@@ -137,9 +145,21 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
                         )
                         HorizontalDivider()
                         Text("Summary:", fontWeight = FontWeight.SemiBold)
-                        SelectionContainer {
-                            Text(item.summaryText, style = MaterialTheme.typography.bodyMedium)
+
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides (if (isRtlText) LayoutDirection.Rtl else LayoutDirection.Ltr)
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    item.summaryText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    lineHeight = 24.sp,
+                                    textAlign = if (isRtlText) TextAlign.Right else TextAlign.Left,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
+
                         HorizontalDivider()
                         Text("Original Text:", fontWeight = FontWeight.SemiBold)
                         SelectionContainer {
