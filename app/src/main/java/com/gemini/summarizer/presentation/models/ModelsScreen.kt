@@ -97,25 +97,35 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilledTonalButton(
                         onClick = { viewModel.selectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 32.dp, minWidth = 1.dp)
                     ) {
                         Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Select All", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            text = "Select All",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
 
                     OutlinedButton(
                         onClick = { viewModel.deselectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(34.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 32.dp, minWidth = 1.dp)
                     ) {
                         Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Select None", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            text = "Select None",
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }

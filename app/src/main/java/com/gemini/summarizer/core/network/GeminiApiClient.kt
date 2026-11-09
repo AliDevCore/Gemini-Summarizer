@@ -194,10 +194,16 @@ class GeminiApiClient {
                             }
                         }
 
-                        val isDeprecated = cleanId.contains("2.5") ||
+                        val isGeminiTextModel = cleanId.startsWith("gemini-", ignoreCase = true) &&
+                                displayName.startsWith("Gemini", ignoreCase = true)
+
+                        val isExcluded = cleanId.contains("2.5") ||
                                 cleanId.contains("1.0") ||
                                 cleanId.endsWith("-001") ||
                                 cleanId.endsWith("-002") ||
+                                cleanId.contains("antigravity") ||
+                                cleanId.contains("deep-research") ||
+                                cleanId.contains("gemma") ||
                                 cleanId.contains("embedding") ||
                                 cleanId.contains("aqa") ||
                                 cleanId.contains("imagen") ||
@@ -205,7 +211,7 @@ class GeminiApiClient {
                                 cleanId.contains("tts") ||
                                 cleanId.contains("whisper")
 
-                        if (supportsText && !isDeprecated) {
+                        if (supportsText && isGeminiTextModel && !isExcluded) {
                             result.add(
                                 DiscoveredModel(
                                     id = cleanId,

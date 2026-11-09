@@ -142,7 +142,9 @@ class AutoRotationEngine(
                             onProgressUpdate?.invoke("Key ${keyEntity.id} is invalid. Trying next key...")
                         }
                         is GeminiApiResult.RequestError -> {
-                            return RotationExecutionResult.Failure(callResult.message)
+                            onProgressUpdate?.invoke("Model ${model.id} error (${callResult.message}). Rotating to next model...")
+                            modelUnavailableForAccount = true
+                            break
                         }
                         is GeminiApiResult.TransientError -> {
                             onProgressUpdate?.invoke("Temporary network glitch. Trying next option...")
