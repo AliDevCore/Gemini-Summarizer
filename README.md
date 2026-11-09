@@ -13,6 +13,19 @@
 
 **Gemini Summarizer** is a production-grade, privacy-focused native Android application built with **Kotlin** and **Jetpack Compose (Material 3)**. It is designed to intelligently ingest, parse, chunk, and summarize long texts, live web articles via URL, and complex documents (PDF, DOCX, TXT, Markdown, CSV) using Google's state-of-the-art **Gemini Developer APIs**.
 
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/90077a7f-e56a-4473-a6f3-725c3bc7de98">
+    <img src="https://github.com/user-attachments/assets/90077a7f-e56a-4473-a6f3-725c3bc7de98" width="32%" alt="1">
+  </a>
+  <a href="https://github.com/user-attachments/assets/dca877be-eb5e-4944-b046-46ce092c9f16">
+    <img src="https://github.com/user-attachments/assets/dca877be-eb5e-4944-b046-46ce092c9f16" width="32%" alt="2">
+  </a>
+  <a href="https://github.com/user-attachments/assets/d7759c02-574d-46f3-8cb9-95ac3ea3d6d9">
+    <img src="https://github.com/user-attachments/assets/d7759c02-574d-46f3-8cb9-95ac3ea3d6d9" width="32%" alt="3">
+  </a>
+</p>
+
+
 ### 🔑 Key Capabilities
 - **🌐 Direct Web Page & Article Summarization:** Simply paste any web URL (e.g. `https://...`) into the input box; Gemini directly fetches, reads, and delivers an executive summary of the online article or webpage.
 - **📑 Native Multimodal Document Ingestion:** Full PDF documents are transmitted directly to Gemini using high-fidelity native `inlineData` (Base64) encoding. Support for DOCX, TXT, Markdown, and CSV files is seamlessly integrated.
