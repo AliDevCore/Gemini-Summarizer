@@ -30,3 +30,4 @@ interface ModelDao {
     @Query("SELECT COUNT(*) FROM gemini_models")
     suspend fun getModelsCount(): Int
 }
+

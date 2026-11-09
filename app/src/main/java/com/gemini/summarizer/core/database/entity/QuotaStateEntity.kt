@@ -17,3 +17,4 @@ data class QuotaStateEntity(
     val cooldownUntilTimestamp: Long = 0L,
     val failureReason: String? = null
 )
+

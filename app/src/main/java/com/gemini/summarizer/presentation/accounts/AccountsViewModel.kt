@@ -14,16 +14,20 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-data class AccountWithKeys(
-    val account: AccountEntity,
-    val keys: List<ApiKeyEntity>
+data class ApiKeyDisplayItem(
+    val id: Long,
+    val accountId: Long,
+    val label: String,
+    val maskedKey: String,
+    val isActive: Boolean,
+    val isInvalid: Boolean,
+    val statusMessage: String
 )
 
 data class AccountsUiState(
-    val accountsWithKeys: List<AccountWithKeys> = emptyList(),
+    val keysList: List<ApiKeyDisplayItem> = emptyList(),
     val isLoading: Boolean = false,
-    val showAddAccountDialog: Boolean = false,
-    val showAddKeyDialogForAccount: AccountEntity? = null,
+    val showAddKeyDialog: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -36,110 +40,99 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<AccountsUiState> = _uiState.asStateFlow()
 
     init {
-        loadAccounts()
+        loadKeys()
     }
 
-    private fun loadAccounts() {
+    private fun loadKeys() {
         viewModelScope.launch {
             database.accountDao().getAllAccountsFlow().collectLatest { accounts ->
-                val list = mutableListOf<AccountWithKeys>()
-                for (acc in accounts) {
-                    val keys = database.apiKeyDao().getKeysForAccount(acc.id)
-                    list.add(AccountWithKeys(acc, keys))
+                val displayList = mutableListOf<ApiKeyDisplayItem>()
+                for (account in accounts) {
+                    val keys = database.apiKeyDao().getKeysForAccount(account.id)
+                    for (k in keys) {
+                        val raw = securityManager.getApiKey(k.keyIdentifier) ?: "Missing"
+                        displayList.add(
+                            ApiKeyDisplayItem(
+                                id = k.id,
+                                accountId = account.id,
+                                label = account.name,
+                                maskedKey = SecurityManager.maskApiKey(raw),
+                                isActive = k.isActive,
+                                isInvalid = k.isInvalid,
+                                statusMessage = k.statusMessage
+                            )
+                        )
+                    }
                 }
-                _uiState.value = _uiState.value.copy(accountsWithKeys = list)
+                _uiState.value = _uiState.value.copy(keysList = displayList)
             }
         }
     }
 
-    fun openAddAccountDialog() {
-        _uiState.value = _uiState.value.copy(showAddAccountDialog = true, errorMessage = null)
-    }
-
-    fun dismissAddAccountDialog() {
-        _uiState.value = _uiState.value.copy(showAddAccountDialog = false)
-    }
-
-    fun createAccount(name: String) {
-        if (name.isBlank()) return
-        viewModelScope.launch {
-            val count = _uiState.value.accountsWithKeys.size
-            database.accountDao().insertAccount(
-                AccountEntity(name = name.trim(), priority = count + 1)
-            )
-            _uiState.value = _uiState.value.copy(showAddAccountDialog = false)
-            loadAccounts()
-        }
-    }
-
-    fun toggleAccountEnabled(account: AccountEntity) {
-        viewModelScope.launch {
-            database.accountDao().updateAccount(account.copy(isEnabled = !account.isEnabled))
-            loadAccounts()
-        }
-    }
-
-    fun deleteAccount(account: AccountEntity) {
-        viewModelScope.launch {
-            val keys = database.apiKeyDao().getKeysForAccount(account.id)
-            for (k in keys) {
-                securityManager.deleteApiKey(k.keyIdentifier)
-            }
-            database.accountDao().deleteAccount(account)
-            loadAccounts()
-        }
-    }
-
-    fun openAddKeyDialog(account: AccountEntity) {
-        _uiState.value = _uiState.value.copy(showAddKeyDialogForAccount = account, errorMessage = null)
+    fun openAddKeyDialog() {
+        _uiState.value = _uiState.value.copy(showAddKeyDialog = true, errorMessage = null)
     }
 
     fun dismissAddKeyDialog() {
-        _uiState.value = _uiState.value.copy(showAddKeyDialogForAccount = null)
+        _uiState.value = _uiState.value.copy(showAddKeyDialog = false)
     }
 
-    fun addApiKey(rawKey: String, projectId: String) {
-        val account = _uiState.value.showAddKeyDialogForAccount ?: return
+    fun addDirectApiKey(rawKey: String, customLabel: String?) {
         val cleanKey = rawKey.trim()
-        val cleanProject = if (projectId.isBlank()) "project-${account.id}" else projectId.trim()
-
         if (cleanKey.isBlank()) return
 
         viewModelScope.launch {
+            val keyNumber = _uiState.value.keysList.size + 1
+            val label = if (customLabel.isNullOrBlank()) "Key #$keyNumber" else customLabel.trim()
+
+            // Create account slot automatically for this key
+            val accountId = database.accountDao().insertAccount(
+                AccountEntity(
+                    name = label,
+                    priority = keyNumber,
+                    isEnabled = true
+                )
+            )
+
             val keyIdentifier = UUID.randomUUID().toString()
             securityManager.storeApiKey(keyIdentifier, cleanKey)
 
             database.apiKeyDao().insertApiKey(
                 ApiKeyEntity(
-                    accountId = account.id,
+                    accountId = accountId,
                     keyIdentifier = keyIdentifier,
-                    projectId = cleanProject,
+                    projectId = "project-$accountId",
                     isActive = true,
                     statusMessage = "Ready"
                 )
             )
-            _uiState.value = _uiState.value.copy(showAddKeyDialogForAccount = null)
-            loadAccounts()
+
+            _uiState.value = _uiState.value.copy(showAddKeyDialog = false)
+            loadKeys()
         }
     }
 
-    fun toggleKeyActive(key: ApiKeyEntity) {
+    fun toggleKeyActive(item: ApiKeyDisplayItem) {
         viewModelScope.launch {
-            database.apiKeyDao().updateApiKey(key.copy(isActive = !key.isActive))
-            loadAccounts()
+            val key = database.apiKeyDao().getKeysForAccount(item.accountId).find { it.id == item.id }
+            if (key != null) {
+                database.apiKeyDao().updateApiKey(key.copy(isActive = !key.isActive))
+                loadKeys()
+            }
         }
     }
 
-    fun deleteKey(key: ApiKeyEntity) {
+    fun deleteKey(item: ApiKeyDisplayItem) {
         viewModelScope.launch {
-            securityManager.deleteApiKey(key.keyIdentifier)
-            database.apiKeyDao().deleteApiKey(key)
-            loadAccounts()
+            val account = database.accountDao().getAccountById(item.accountId)
+            if (account != null) {
+                val keys = database.apiKeyDao().getKeysForAccount(account.id)
+                for (k in keys) {
+                    securityManager.deleteApiKey(k.keyIdentifier)
+                }
+                database.accountDao().deleteAccount(account)
+                loadKeys()
+            }
         }
-    }
-
-    fun getMaskedKey(key: ApiKeyEntity): String {
-        val raw = securityManager.getApiKey(key.keyIdentifier) ?: return "Missing"
-        return SecurityManager.maskApiKey(raw)
     }
 }

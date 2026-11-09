@@ -28,3 +28,4 @@ data class ApiKeyEntity(
     val isInvalid: Boolean = false,
     val statusMessage: String = "Ready"
 )
+

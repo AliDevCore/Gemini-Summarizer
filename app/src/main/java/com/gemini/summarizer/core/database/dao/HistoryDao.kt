@@ -21,3 +21,4 @@ interface HistoryDao {
     @Query("DELETE FROM summary_history")
     suspend fun clearAllHistory()
 }
+

@@ -9,7 +9,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
-    data object Home : Screen("home", "Summarizer", Icons.Default.Home)
+    data object Home : Screen("home", "Home", Icons.Default.Home)
     data object Accounts : Screen("accounts", "Accounts", Icons.Default.AccountCircle)
     data object Models : Screen("models", "Models", Icons.Default.AutoAwesome)
     data object History : Screen("history", "History", Icons.Default.History)

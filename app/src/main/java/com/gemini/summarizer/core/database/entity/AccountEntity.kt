@@ -12,3 +12,4 @@ data class AccountEntity(
     val isEnabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 )
+

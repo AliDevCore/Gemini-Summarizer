@@ -18,3 +18,4 @@ data class ModelEntity(
     val isEnabled: Boolean = true,
     val lastDiscoveredAt: Long = System.currentTimeMillis()
 )
+

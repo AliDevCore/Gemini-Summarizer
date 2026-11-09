@@ -69,3 +69,4 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 }
+

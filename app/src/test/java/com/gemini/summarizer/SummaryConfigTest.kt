@@ -30,3 +30,4 @@ class SummaryConfigTest {
         assertTrue(instruction.contains("Retain precise technical terms"))
     }
 }
+

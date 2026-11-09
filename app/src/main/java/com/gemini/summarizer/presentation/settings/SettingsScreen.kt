@@ -100,13 +100,17 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Record summary history locally")
+                        Text(
+                            text = "Record summary history locally",
+                            modifier = Modifier.weight(1f).padding(end = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                         Switch(
                             checked = uiState.saveHistory,
                             onCheckedChange = { viewModel.setSaveHistory(it) }
@@ -118,7 +122,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Store original input text with summary")
+                        Text(
+                            text = "Store original input text with summary",
+                            modifier = Modifier.weight(1f).padding(end = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                         Switch(
                             checked = uiState.saveOriginalText,
                             onCheckedChange = { viewModel.setSaveOriginalText(it) },
@@ -195,7 +203,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             AlertDialog(
                 onDismissRequest = { showClearAllDataDialog = false },
                 title = { Text("Reset Entire Application?") },
-                text = { Text("This will permanently delete all accounts, API keys, history, and preferences.") },
+                text = { Text("This will permanently delete all API keys, history, and preferences.") },
                 confirmButton = {
                     Button(
                         onClick = {

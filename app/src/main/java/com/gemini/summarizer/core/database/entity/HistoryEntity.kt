@@ -20,3 +20,4 @@ data class HistoryEntity(
     val targetLanguage: String = "English",
     val summaryType: String = "General"
 )
+

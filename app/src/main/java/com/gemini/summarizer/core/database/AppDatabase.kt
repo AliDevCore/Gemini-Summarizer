@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
         QuotaStateEntity::class,
         HistoryEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -40,14 +40,22 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "gemini_summarizer_database"
                 )
+                .fallbackToDestructiveMigration()
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
-                        // Pre-populate initial default models
                         CoroutineScope(Dispatchers.IO).launch {
-                            getInstance(context).modelDao().insertModels(
-                                getDefaultModels()
-                            )
+                            getInstance(context).modelDao().insertModels(getDefaultModels())
+                        }
+                    }
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        CoroutineScope(Dispatchers.IO).launch {
+                            // Ensure modern models are always present even on existing databases
+                            val dao = getInstance(context).modelDao()
+                            for (model in getDefaultModels()) {
+                                dao.insertModelIfNotExist(model)
+                            }
                         }
                     }
                 })
@@ -60,9 +68,9 @@ abstract class AppDatabase : RoomDatabase() {
         fun getDefaultModels(): List<ModelEntity> {
             return listOf(
                 ModelEntity(
-                    id = "gemini-2.5-pro",
-                    displayName = "Gemini 2.5 Pro",
-                    description = "Most capable model for deep reasoning and complex summarization",
+                    id = "gemini-3.1-pro-preview",
+                    displayName = "Gemini 3.1 Pro Preview",
+                    description = "Most capable frontier model for deep reasoning and complex synthesis",
                     inputTokenLimit = 2097152,
                     outputTokenLimit = 8192,
                     isPreview = true,
@@ -72,22 +80,22 @@ abstract class AppDatabase : RoomDatabase() {
                     isEnabled = true
                 ),
                 ModelEntity(
-                    id = "gemini-2.0-flash",
-                    displayName = "Gemini 2.0 Flash",
-                    description = "Next-gen multimodal, fast speed with high quality",
+                    id = "gemini-3-flash-preview",
+                    displayName = "Gemini 3 Flash Preview",
+                    description = "Next-gen ultra fast multimodal model with frontier speed",
                     inputTokenLimit = 1048576,
                     outputTokenLimit = 8192,
-                    isPreview = false,
-                    isStable = true,
+                    isPreview = true,
+                    isStable = false,
                     supportsTextGeneration = true,
                     priority = 2,
                     isEnabled = true
                 ),
                 ModelEntity(
-                    id = "gemini-1.5-pro",
-                    displayName = "Gemini 1.5 Pro",
-                    description = "Advanced reasoning, long context window up to 2M tokens",
-                    inputTokenLimit = 2097152,
+                    id = "gemini-3.8-flash",
+                    displayName = "Gemini 3.8 Flash",
+                    description = "High-efficiency balanced model optimized for fast summarization",
+                    inputTokenLimit = 1048576,
                     outputTokenLimit = 8192,
                     isPreview = false,
                     isStable = true,
@@ -96,9 +104,9 @@ abstract class AppDatabase : RoomDatabase() {
                     isEnabled = true
                 ),
                 ModelEntity(
-                    id = "gemini-1.5-flash",
-                    displayName = "Gemini 1.5 Flash",
-                    description = "Fast and versatile performance for general summarization",
+                    id = "gemini-3.5-flash",
+                    displayName = "Gemini 3.5 Flash",
+                    description = "Standard high-throughput production Flash model",
                     inputTokenLimit = 1048576,
                     outputTokenLimit = 8192,
                     isPreview = false,
@@ -108,15 +116,63 @@ abstract class AppDatabase : RoomDatabase() {
                     isEnabled = true
                 ),
                 ModelEntity(
-                    id = "gemini-1.5-flash-8b",
-                    displayName = "Gemini 1.5 Flash-8B",
-                    description = "High-throughput and lightweight model",
+                    id = "gemini-3.5-flash-lite",
+                    displayName = "Gemini 3.5 Flash-Lite",
+                    description = "Ultra-fast, lowest latency model for rapid response",
                     inputTokenLimit = 1048576,
                     outputTokenLimit = 8192,
                     isPreview = false,
                     isStable = true,
                     supportsTextGeneration = true,
                     priority = 5,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "gemini-3.1-flash-lite",
+                    displayName = "Gemini 3.1 Flash-Lite",
+                    description = "Lightweight high-speed model with low quota footprint",
+                    inputTokenLimit = 1048576,
+                    outputTokenLimit = 8192,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 6,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "gemini-flash-lite-latest",
+                    displayName = "Gemini Flash-Lite Latest",
+                    description = "Dynamic alias tracking the newest production Flash-Lite checkpoint",
+                    inputTokenLimit = 1048576,
+                    outputTokenLimit = 8192,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 7,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "gemini-3.6-flash",
+                    displayName = "Gemini 3.6 Flash",
+                    description = "Stable performance model for high-volume summarization",
+                    inputTokenLimit = 1048576,
+                    outputTokenLimit = 8192,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 8,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "gemini-3.7-flash",
+                    displayName = "Gemini 3.7 Flash",
+                    description = "Enhanced speed and quality reasoning model",
+                    inputTokenLimit = 1048576,
+                    outputTokenLimit = 8192,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 9,
                     isEnabled = true
                 )
             )

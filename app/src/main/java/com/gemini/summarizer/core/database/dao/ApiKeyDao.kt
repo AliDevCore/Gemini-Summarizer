@@ -33,3 +33,4 @@ interface ApiKeyDao {
     @Query("UPDATE api_keys SET lastUsedTimestamp = :timestamp WHERE id = :keyId")
     suspend fun updateLastUsed(keyId: Long, timestamp: Long)
 }
+

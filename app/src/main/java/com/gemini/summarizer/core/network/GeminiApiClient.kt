@@ -15,6 +15,7 @@ sealed class GeminiApiResult<out T> {
     data class Success<out T>(val data: T) : GeminiApiResult<T>()
     data class RateLimited(val message: String, val retryAfterSeconds: Long? = null) : GeminiApiResult<Nothing>()
     data class InvalidKey(val message: String) : GeminiApiResult<Nothing>()
+    data class ModelUnavailable(val message: String) : GeminiApiResult<Nothing>()
     data class TransientError(val message: String, val statusCode: Int? = null) : GeminiApiResult<Nothing>()
     data class RequestError(val message: String) : GeminiApiResult<Nothing>()
 }
@@ -46,7 +47,7 @@ class GeminiApiClient {
         systemInstruction: String? = null
     ): GeminiApiResult<String> = withContext(Dispatchers.IO) {
         val cleanModel = modelId.removePrefix("models/")
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
 
         val rootJson = JsonObject()
         val contentsArray = com.google.gson.JsonArray()
@@ -79,6 +80,7 @@ class GeminiApiClient {
             .url(url)
             .post(requestBody)
             .header("Content-Type", "application/json")
+            .header("x-goog-api-key", apiKey.trim())
             .build()
 
         try {
@@ -101,6 +103,10 @@ class GeminiApiClient {
                         }
                         return@withContext GeminiApiResult.RequestError("Empty response returned from model")
                     }
+                    404 -> {
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Model not found or retired (HTTP 404)"
+                        return@withContext GeminiApiResult.ModelUnavailable(errorMessage)
+                    }
                     429 -> {
                         val retryAfterHeader = response.header("Retry-After")?.toLongOrNull()
                         val errorMessage = parseErrorMessage(responseBody) ?: "Rate limit or quota exceeded"
@@ -116,6 +122,13 @@ class GeminiApiClient {
                     }
                     else -> {
                         val errorMessage = parseErrorMessage(responseBody) ?: "Request error (HTTP $code)"
+                        // Check if Google returned a deprecation or model unavailable notice in a 400 error
+                        if (errorMessage.contains("no longer available", ignoreCase = true) ||
+                            errorMessage.contains("not found", ignoreCase = true) ||
+                            errorMessage.contains("update your code to use", ignoreCase = true)
+                        ) {
+                            return@withContext GeminiApiResult.ModelUnavailable(errorMessage)
+                        }
                         return@withContext GeminiApiResult.RequestError(errorMessage)
                     }
                 }
@@ -128,10 +141,11 @@ class GeminiApiClient {
     }
 
     suspend fun listModels(apiKey: String): GeminiApiResult<List<DiscoveredModel>> = withContext(Dispatchers.IO) {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models"
         val request = Request.Builder()
             .url(url)
             .get()
+            .header("x-goog-api-key", apiKey.trim())
             .build()
 
         try {
@@ -162,7 +176,6 @@ class GeminiApiClient {
                             }
                         }
 
-                        // Filter out non-text models (e.g. embedding-only, imagen, etc.)
                         if (supportsText && !cleanId.contains("embedding") && !cleanId.contains("aqa")) {
                             result.add(
                                 DiscoveredModel(

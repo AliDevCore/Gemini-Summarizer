@@ -70,3 +70,4 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[KEY_SAVE_ORIGINAL_TEXT] = enabled }
     }
 }
+

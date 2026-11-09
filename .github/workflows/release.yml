@@ -37,8 +37,8 @@ jobs:
       - name: Run Unit Tests
         run: ./gradlew test --stacktrace
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Signed Release APK
+        run: ./gradlew assembleRelease -PVERSION_CODE=${{ github.run_number }} -PVERSION_NAME="1.0.${{ github.run_number }}" --stacktrace
 
       - name: Determine Release Tag
         id: tag_generator
@@ -57,7 +57,7 @@ jobs:
       - name: Prepare Release APK Artifact
         run: |
           mkdir -p release-artifacts
-          find app/build/outputs/apk/ -name "*.apk" -exec cp {} release-artifacts/Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk \;
+          find app/build/outputs/apk/release/ -name "*.apk" -exec cp {} release-artifacts/Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk \;
 
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
@@ -65,15 +65,17 @@ jobs:
           tag_name: ${{ steps.tag_generator.outputs.TAG_NAME }}
           name: "Release ${{ steps.tag_generator.outputs.TAG_NAME }}"
           body: |
-            ### 🚀 Gemini Summarizer Automated Release
+            ### 🚀 Gemini Summarizer Official Release
             
             - **Release Tag:** `${{ steps.tag_generator.outputs.TAG_NAME }}`
-            - **Target Branch:** `${{ github.ref_name }}`
-            - **Asset:** Standalone Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
+            - **Version Code:** `${{ github.run_number }}`
+            - **Asset:** Standalone signed Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
             
             #### Highlights:
-            - Built, tested, and generated via GitHub Actions CI/CD.
-            - Compatible with Android 8.0 (API 26) through Android 14+ (API 34).
+            - **Persistent Signature:** Signed with the official project release certificate for seamless in-place updates without data loss.
+            - **Updated Models:** Gemini 3.1 Pro Preview, Gemini 3 Flash Preview, Gemini 3.8 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite.
+            - **Direct API Keys:** Streamlined direct API key pool management.
+            - **Refined Material 3 UI:** Fixed text wrapping and button clipping across all screen sizes.
           files: release-artifacts/*.apk
           draft: false
           prerelease: false

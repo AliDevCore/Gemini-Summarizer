@@ -47,3 +47,4 @@ class SecurityManager(context: Context) {
         }
     }
 }
+

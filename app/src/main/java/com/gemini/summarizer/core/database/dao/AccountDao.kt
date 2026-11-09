@@ -24,3 +24,4 @@ interface AccountDao {
     @Delete
     suspend fun deleteAccount(account: AccountEntity)
 }
+

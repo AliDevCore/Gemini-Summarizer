@@ -3,6 +3,7 @@ package com.gemini.summarizer.presentation.models
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -10,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gemini.summarizer.core.database.entity.ModelEntity
@@ -63,7 +65,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Automatically ranks stronger & newer models first (e.g. 2.5 Pro > 2.0 Flash > 1.5 Pro).",
+                            text = "Automatically ranks stronger & newer models first (e.g. 3.1 Pro > 3 Flash > 3.8 Flash).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -137,32 +139,36 @@ fun ModelCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
                         text = "#${model.priority} ${model.displayName}",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.width(8.dp))
-                    if (model.isPreview) {
-                        SuggestionChip(
-                            onClick = {},
-                            label = { Text("Preview", style = MaterialTheme.typography.labelSmall) },
-                            colors = SuggestionChipDefaults.suggestionChipColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                            )
-                        )
-                    } else {
-                        SuggestionChip(
-                            onClick = {},
-                            label = { Text("Stable", style = MaterialTheme.typography.labelSmall) },
-                            colors = SuggestionChipDefaults.suggestionChipColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer
-                            )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (model.isPreview) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        Text(
+                            text = if (model.isPreview) "Preview" else "Stable",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (model.isPreview) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
                 }
+
+                Spacer(Modifier.height(2.dp))
 
                 Text(
                     text = "ID: ${model.id}",
@@ -171,7 +177,7 @@ fun ModelCard(
                 )
 
                 Text(
-                    text = "Input Context: ${model.inputTokenLimit / 1024}K tokens | Output: ${model.outputTokenLimit / 1024}K",
+                    text = "Context: ${model.inputTokenLimit / 1024}K in | ${model.outputTokenLimit / 1024}K out",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

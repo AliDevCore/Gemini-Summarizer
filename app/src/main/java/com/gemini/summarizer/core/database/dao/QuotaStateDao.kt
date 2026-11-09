@@ -17,3 +17,4 @@ interface QuotaStateDao {
     @Query("SELECT * FROM quota_states")
     suspend fun getAllQuotaStates(): List<QuotaStateEntity>
 }
+

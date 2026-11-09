@@ -52,3 +52,4 @@ data class SummaryConfig(
         """.trimIndent()
     }
 }
+

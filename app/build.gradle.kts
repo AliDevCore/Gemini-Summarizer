@@ -4,16 +4,28 @@ plugins {
     id("kotlin-kapt")
 }
 
+val customVersionCode = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 1
+val customVersionName = (project.findProperty("VERSION_NAME") as? String) ?: "1.0.$customVersionCode"
+
 android {
     namespace = "com.gemini.summarizer"
     compileSdk = 34
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("${rootDir}/keystore/release.jks")
+            storePassword = "gemini_summarizer_secure_keystore_2026"
+            keyAlias = "gemini_key"
+            keyPassword = "gemini_summarizer_secure_keystore_2026"
+        }
+    }
 
     defaultConfig {
         applicationId = "com.gemini.summarizer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = customVersionCode
+        versionName = customVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -24,6 +36,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -32,6 +45,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -107,4 +121,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

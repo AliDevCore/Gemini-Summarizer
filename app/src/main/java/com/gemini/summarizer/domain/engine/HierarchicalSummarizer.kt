@@ -164,3 +164,4 @@ class HierarchicalSummarizer(
         return if (chunks.isEmpty()) listOf(text) else chunks
     }
 }
+
