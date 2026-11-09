@@ -11,9 +11,17 @@
 
 ## 🌟 Executive Overview
 
-**Gemini Summarizer** is a production-grade, privacy-focused native Android application built with **Kotlin** and **Jetpack Compose (Material 3)**. It is designed to intelligently ingest, parse, chunk, and summarize long texts and complex documents (PDF, DOCX, TXT, Markdown, CSV) using Google's state-of-the-art **Gemini Developer APIs**.
+**Gemini Summarizer** is a production-grade, privacy-focused native Android application built with **Kotlin** and **Jetpack Compose (Material 3)**. It is designed to intelligently ingest, parse, chunk, and summarize long texts, live web articles via URL, and complex documents (PDF, DOCX, TXT, Markdown, CSV) using Google's state-of-the-art **Gemini Developer APIs**.
 
-### 🔑 The Core Problem Solved
+### 🔑 Key Capabilities
+- **🌐 Direct Web Page & Article Summarization:** Simply paste any web URL (e.g. `https://...`) into the input box; Gemini directly fetches, reads, and delivers an executive summary of the online article or webpage.
+- **📑 Native Multimodal Document Ingestion:** Full PDF documents are transmitted directly to Gemini using high-fidelity native `inlineData` (Base64) encoding. Support for DOCX, TXT, Markdown, and CSV files is seamlessly integrated.
+- **⚡ Autonomous Multi-Tier Auto-Rotation Engine:** Intelligently rotates across registered Google Accounts, API keys, and models to conquer API rate limits without disrupting your workflow.
+- **🌍 Native RTL Support:** Full bidirectional rendering and typography for Persian, Arabic, and multilingual outputs.
+- **✨ Rich Markdown Formatting:** Bold headlines (`**bold**`), clean bullet points (`•`), and structured executive summaries without unsightly raw asterisks.
+- **💾 One-Touch Multi-Format Export:** Clean icon-based export to PDF, DOCX, Markdown, and TXT with proper MIME types.
+
+### 🔄 The Core Problem Solved
 Google Gemini API accounts operate under project-level rate limits (e.g., Requests Per Minute [RPM], Tokens Per Minute [TPM], Requests Per Day [RPD]). When a developer or researcher runs high-volume summarization workflows, single-account quotas are quickly exhausted (HTTP 429 / `RESOURCE_EXHAUSTED`).
 
 **Gemini Summarizer solves this through an autonomous multi-tier Auto-Rotation Engine:**
@@ -63,7 +71,7 @@ The rotation algorithm strictly adheres to capability-first principles:
 [Start Summarization]
          │
          ▼
-[Select Highest-Priority Active Model (e.g. Gemini 2.5 Pro)]
+[Select Highest-Priority Active Model (e.g. Gemini 3.1 Pro / 3 Flash)]
          │
          ▼
 [Select Next Active Google Account (e.g. Account 1)]
@@ -87,17 +95,19 @@ The rotation algorithm strictly adheres to capability-first principles:
                                  │
                                  ▼
                     [Step Down to Next Model]
-                    (e.g. Gemini 2.0 Flash)
+                    (e.g. Gemini 3.8 / 3.5 Flash)
 ```
 
 ---
 
-## 📄 Document Ingestion & Export
+## 📄 Ingestion & Export Capabilities
 
-### Ingestion Support (SAF)
-- **PDF Documents:** Extracts text streams and page counts; automatically detects scanned/empty documents.
+### Ingestion Support (Files, Text & Live Web)
+- **Web Pages & Online Articles:** Direct URL processing (`https://...`). Gemini accesses web content directly and summarizes it accurately.
+- **PDF Documents:** Native multimodal processing via `inlineData` (Base64) transmission directly to Gemini, maintaining structure and context.
 - **Word Documents (DOCX):** Parses standard OpenXML archives (`word/document.xml`) for paragraphs and formatting.
 - **Plain Text & Markdown:** UTF-8 support for TXT, MD, CSV, HTML, and JSON.
+- **Direct Text Input:** Manual pasting and typing with real-time word and character counters.
 
 ### Export Capabilities
 Export summaries directly to your device via Android's Storage Access Framework:

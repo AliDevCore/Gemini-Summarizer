@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,22 +111,25 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             modifier = Modifier.weight(1f).padding(end = 8.dp)
                         ) {
                             Icon(
-                                Icons.Default.AttachFile,
+                                Icons.Default.InsertDriveFile,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(28.dp)
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Column {
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = uiState.selectedFileName!!,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "Ready to transmit directly to Gemini",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                                 )
                             }
                         }
@@ -168,19 +172,24 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
-            // Direct Text Input Field (Kept clean!)
+            // Direct Text Input Field (Supports text or live web URLs!)
             OutlinedTextField(
                 value = uiState.inputText,
                 onValueChange = { viewModel.onInputTextChanged(it) },
                 label = {
-                    Text(if (uiState.selectedFileName != null) "Additional Instructions / Notes (Optional)" else "Input Text")
+                    Text(
+                        if (uiState.selectedFileName != null)
+                            "Additional Instructions / Notes (Optional)"
+                        else
+                            "Input Text or Web URL"
+                    )
                 },
                 placeholder = {
                     Text(
                         if (uiState.selectedFileName != null)
                             "Enter any special focus or instructions for the attached document..."
                         else
-                            "Type or paste long text, articles, or transcripts here..."
+                            "Type/paste text, articles, or a web URL (e.g. https://...)"
                     )
                 },
                 modifier = Modifier
@@ -325,7 +334,6 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                     result.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
                 }
 
-                // Render Markdown into real bold and bullet points without asterisks
                 val formattedSummary = remember(result.summaryText) {
                     MarkdownRenderer.parse(result.summaryText)
                 }
