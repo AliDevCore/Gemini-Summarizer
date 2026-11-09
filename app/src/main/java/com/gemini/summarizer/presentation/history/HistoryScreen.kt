@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gemini.summarizer.core.database.entity.HistoryEntity
+import com.gemini.summarizer.core.util.MarkdownRenderer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -127,6 +128,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
                             item.targetLanguage.equals("arabic", ignoreCase = true) ||
                             item.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
 
+            val formattedSummary = remember(item.summaryText) {
+                MarkdownRenderer.parse(item.summaryText)
+            }
+
             AlertDialog(
                 onDismissRequest = { viewModel.selectHistoryItem(null) },
                 title = { Text(item.title, fontWeight = FontWeight.Bold) },
@@ -151,7 +156,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = viewModel()) {
                         ) {
                             SelectionContainer {
                                 Text(
-                                    item.summaryText,
+                                    text = formattedSummary,
                                     style = MaterialTheme.typography.bodyMedium,
                                     lineHeight = 24.sp,
                                     textAlign = if (isRtlText) TextAlign.Right else TextAlign.Left,
@@ -221,6 +226,9 @@ fun HistoryCard(
     onCopy: () -> Unit
 ) {
     val dateStr = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US).format(Date(item.timestamp))
+    val cleanSnippet = remember(item.summaryText) {
+        item.summaryText.replace("**", "").replace("* ", "• ").take(150)
+    }
 
     Card(
         modifier = Modifier
@@ -260,7 +268,7 @@ fun HistoryCard(
             Spacer(Modifier.height(8.dp))
 
             Text(
-                text = item.summaryText.take(150) + if (item.summaryText.length > 150) "..." else "",
+                text = cleanSnippet + if (item.summaryText.length > 150) "..." else "",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )

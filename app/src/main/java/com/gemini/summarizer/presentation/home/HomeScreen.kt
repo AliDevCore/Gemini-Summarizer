@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -30,6 +29,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gemini.summarizer.core.util.MarkdownRenderer
 
 class DynamicCreateDocumentContract : ActivityResultContract<Pair<String, String>, Uri?>() {
     override fun createIntent(context: Context, input: Pair<String, String>): Intent {
@@ -277,6 +277,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                     result.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
                 }
 
+                // Render Markdown into real bold and bullet points without asterisks
+                val formattedSummary = remember(result.summaryText) {
+                    MarkdownRenderer.parse(result.summaryText)
+                }
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
@@ -320,13 +325,13 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
                         HorizontalDivider()
 
-                        // RTL or LTR aware display box
+                        // RTL or LTR aware display box with clean Markdown rendering
                         CompositionLocalProvider(
                             LocalLayoutDirection provides (if (isRtlText) LayoutDirection.Rtl else LayoutDirection.Ltr)
                         ) {
                             SelectionContainer {
                                 Text(
-                                    text = result.summaryText,
+                                    text = formattedSummary,
                                     style = MaterialTheme.typography.bodyLarge,
                                     lineHeight = 26.sp,
                                     textAlign = if (isRtlText) TextAlign.Right else TextAlign.Left,
