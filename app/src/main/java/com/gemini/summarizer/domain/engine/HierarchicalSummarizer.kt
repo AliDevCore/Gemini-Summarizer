@@ -1,5 +1,6 @@
 package com.gemini.summarizer.domain.engine
 
+import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.domain.model.SummaryConfig
 
 data class SummarizationFinalResult(
@@ -20,7 +21,51 @@ class HierarchicalSummarizer(
         private const val MAX_WORDS_PER_CHUNK = 2500
     }
 
-    suspend fun summarize(
+    suspend fun summarizeFile(
+        fileData: GeminiFileData,
+        fileName: String,
+        userInstructions: String?,
+        config: SummaryConfig,
+        onProgressUpdate: (String) -> Unit
+    ): Result<SummarizationFinalResult> {
+        val systemInstruction = config.buildSystemInstruction()
+        val customNotes = if (!userInstructions.isNullOrBlank()) "\nAdditional User Instructions: $userInstructions" else ""
+
+        val prompt = """
+            Document Name: $fileName
+            Please read and comprehensively summarize the attached document following the formatting and style rules.$customNotes
+        """.trimIndent()
+
+        onProgressUpdate("Transmitting document to Gemini multimodal engine...")
+
+        val rotationResult = rotationEngine.executeWithAutoRotation(
+            prompt = prompt,
+            systemInstruction = systemInstruction,
+            fileData = fileData,
+            onProgressUpdate = onProgressUpdate
+        )
+
+        return when (rotationResult) {
+            is RotationExecutionResult.Success -> {
+                val outWords = rotationResult.outputText.trim().split("\\s+".toRegex()).size
+                Result.success(
+                    SummarizationFinalResult(
+                        summaryText = rotationResult.outputText,
+                        modelUsed = rotationResult.modelUsed,
+                        accountUsed = rotationResult.accountName,
+                        projectId = rotationResult.projectId,
+                        inputWords = 0, // Multimodal document
+                        outputWords = outWords,
+                        stepsCount = 1
+                    )
+                )
+            }
+            is RotationExecutionResult.AllExhausted -> Result.failure(Exception(rotationResult.message))
+            is RotationExecutionResult.Failure -> Result.failure(Exception(rotationResult.message))
+        }
+    }
+
+    suspend fun summarizeText(
         inputText: String,
         config: SummaryConfig,
         onProgressUpdate: (String) -> Unit
@@ -44,7 +89,7 @@ class HierarchicalSummarizer(
                 Please summarize the above text according to instructions.
             """.trimIndent()
 
-            return when (val rotationResult = rotationEngine.executeWithAutoRotation(prompt, systemInstruction, onProgressUpdate)) {
+            return when (val rotationResult = rotationEngine.executeWithAutoRotation(prompt, systemInstruction, null, onProgressUpdate)) {
                 is RotationExecutionResult.Success -> {
                     val outWords = rotationResult.outputText.trim().split("\\s+".toRegex()).size
                     Result.success(
@@ -80,7 +125,7 @@ class HierarchicalSummarizer(
                 Extract all essential arguments, critical facts, data points, and context from this section.
             """.trimIndent()
 
-            val chunkResult = rotationEngine.executeWithAutoRotation(sectionPrompt, systemInstruction, onProgressUpdate)
+            val chunkResult = rotationEngine.executeWithAutoRotation(sectionPrompt, systemInstruction, null, onProgressUpdate)
             when (chunkResult) {
                 is RotationExecutionResult.Success -> {
                     intermediateSummaries.add("--- Section ${index + 1} Summary ---\n" + chunkResult.outputText)
@@ -104,7 +149,7 @@ class HierarchicalSummarizer(
             Synthesize these section summaries into one cohesive, beautifully organized, comprehensive final summary that captures the full narrative, all critical data, and key conclusions without repetition.
         """.trimIndent()
 
-        return when (val finalResult = rotationEngine.executeWithAutoRotation(finalSynthesisPrompt, systemInstruction, onProgressUpdate)) {
+        return when (val finalResult = rotationEngine.executeWithAutoRotation(finalSynthesisPrompt, systemInstruction, null, onProgressUpdate)) {
             is RotationExecutionResult.Success -> {
                 val outWords = finalResult.outputText.trim().split("\\s+".toRegex()).size
                 Result.success(
@@ -139,7 +184,6 @@ class HierarchicalSummarizer(
             }
 
             if (pWords > maxWordsPerChunk) {
-                // If a single paragraph is larger than chunk limit, split by sentences
                 val sentences = paragraph.split(Regex("(?<=[.!?\\n])\\s+"))
                 for (sentence in sentences) {
                     val sWords = sentence.trim().split("\\s+".toRegex()).size
@@ -164,4 +208,3 @@ class HierarchicalSummarizer(
         return if (chunks.isEmpty()) listOf(text) else chunks
     }
 }
-

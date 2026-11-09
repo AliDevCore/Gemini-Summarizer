@@ -90,57 +90,102 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Document Ingestion Banner & Action
+            // Document Selection & Active Attachment Card
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.selectedFileName != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                ),
                 shape = MaterialTheme.shapes.medium
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
+                        .padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (uiState.selectedFileName != null) "File: ${uiState.selectedFileName}" else "Import Document",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Supports PDF, DOCX, TXT, Markdown, CSV",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = {
-                            filePickerLauncher.launch(
-                                arrayOf(
-                                    "application/pdf",
-                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    "text/*"
+                    if (uiState.selectedFileName != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AttachFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = uiState.selectedFileName!!,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
+                                Text(
+                                    text = "Ready to transmit directly to Gemini",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                        IconButton(onClick = { viewModel.removeSelectedFile() }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove file",
+                                tint = MaterialTheme.colorScheme.error
                             )
                         }
-                    ) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Browse")
+                    } else {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Attach Document",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Supports PDF, DOCX, TXT, Markdown, CSV",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                filePickerLauncher.launch(
+                                    arrayOf(
+                                        "application/pdf",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "text/*"
+                                    )
+                                )
+                            }
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Browse")
+                        }
                     }
                 }
             }
 
-            // Direct Text Input Field
+            // Direct Text Input Field (Kept clean!)
             OutlinedTextField(
                 value = uiState.inputText,
                 onValueChange = { viewModel.onInputTextChanged(it) },
-                label = { Text("Input Text") },
-                placeholder = { Text("Type or paste long text, articles, or transcripts here...") },
+                label = {
+                    Text(if (uiState.selectedFileName != null) "Additional Instructions / Notes (Optional)" else "Input Text")
+                },
+                placeholder = {
+                    Text(
+                        if (uiState.selectedFileName != null)
+                            "Enter any special focus or instructions for the attached document..."
+                        else
+                            "Type or paste long text, articles, or transcripts here..."
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 160.dp, max = 280.dp),
+                    .heightIn(min = 140.dp, max = 240.dp),
                 shape = MaterialTheme.shapes.medium
             )
 
@@ -261,12 +306,15 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
-                enabled = !uiState.isLoading && uiState.inputText.isNotBlank(),
+                enabled = !uiState.isLoading && (uiState.inputText.isNotBlank() || uiState.selectedFileName != null),
                 shape = MaterialTheme.shapes.medium
             ) {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Summarize with Gemini", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = if (uiState.selectedFileName != null) "Summarize Document" else "Summarize with Gemini",
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
 
             // Results Section
@@ -318,7 +366,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Input: ${result.inputWords} words -> Output: ${result.outputWords} words",
+                            text = if (result.inputWords > 0) "Input: ${result.inputWords} words -> Output: ${result.outputWords} words" else "Output: ${result.outputWords} words",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )

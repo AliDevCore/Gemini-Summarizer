@@ -2,29 +2,35 @@ package com.gemini.summarizer.presentation.home
 
 import android.app.Application
 import android.net.Uri
+import android.provider.OpenableColumns
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.HistoryEntity
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.export.DocumentExporter
-import com.gemini.summarizer.core.file.DocumentExtractor
+import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.core.security.SecurityManager
 import com.gemini.summarizer.domain.engine.AutoRotationEngine
 import com.gemini.summarizer.domain.engine.HierarchicalSummarizer
 import com.gemini.summarizer.domain.engine.SummarizationFinalResult
 import com.gemini.summarizer.domain.model.SummaryConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class HomeUiState(
     val inputText: String = "",
     val isLoading: Boolean = false,
     val progressMessage: String = "",
     val selectedFileName: String? = null,
+    val selectedFileBase64: String? = null,
+    val selectedFileMimeType: String? = null,
     val summaryResult: SummarizationFinalResult? = null,
     val targetLanguage: String = "Auto",
     val summaryLength: String = "Medium",
@@ -38,7 +44,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application)
     private val securityManager = SecurityManager(application)
     private val settingsDataStore = SettingsDataStore(application)
-    private val documentExtractor = DocumentExtractor(application)
     private val documentExporter = DocumentExporter(application)
 
     private val rotationEngine = AutoRotationEngine(database, securityManager)
@@ -83,48 +88,82 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun onClearInput() {
         _uiState.value = _uiState.value.copy(
             inputText = "",
-            selectedFileName = null,
             summaryResult = null,
+            errorMessage = null
+        )
+    }
+
+    fun removeSelectedFile() {
+        _uiState.value = _uiState.value.copy(
+            selectedFileName = null,
+            selectedFileBase64 = null,
+            selectedFileMimeType = null,
             errorMessage = null
         )
     }
 
     fun processFileUri(uri: Uri) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, progressMessage = "Extracting file content...")
-            val extractResult = documentExtractor.extractFromUri(uri)
-            extractResult.fold(
-                onSuccess = { doc ->
-                    if (doc.isScannedOrEmpty) {
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            progressMessage = "",
-                            errorMessage = "The selected document appears to be scanned or contains no extractable text."
-                        )
-                    } else {
-                        _uiState.value = _uiState.value.copy(
-                            inputText = doc.text,
-                            selectedFileName = doc.fileName,
-                            isLoading = false,
-                            progressMessage = "",
-                            errorMessage = null
-                        )
+            _uiState.value = _uiState.value.copy(isLoading = true, progressMessage = "Preparing document for Gemini...")
+            withContext(Dispatchers.IO) {
+                try {
+                    val contentResolver = getApplication<Application>().contentResolver
+                    var fileName = "Document"
+                    val cursor = contentResolver.query(uri, null, null, null, null)
+                    cursor?.use {
+                        if (it.moveToFirst()) {
+                            val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (index != -1) {
+                                fileName = it.getString(index)
+                            }
+                        }
                     }
-                },
-                onFailure = { err ->
+
+                    val ext = fileName.substringAfterLast(".", "").lowercase()
+                    val mimeType = when (ext) {
+                        "pdf" -> "application/pdf"
+                        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        "txt", "csv", "md" -> "text/plain"
+                        else -> contentResolver.getType(uri) ?: "application/octet-stream"
+                    }
+
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes == null || bytes.isEmpty()) {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            progressMessage = "",
+                            errorMessage = "Selected file is empty."
+                        )
+                        return@withContext
+                    }
+
+                    val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+                    // Keep inputText completely empty, file will be sent directly to Gemini
+                    _uiState.value = _uiState.value.copy(
+                        selectedFileName = fileName,
+                        selectedFileBase64 = base64Data,
+                        selectedFileMimeType = mimeType,
+                        isLoading = false,
+                        progressMessage = "",
+                        errorMessage = null
+                    )
+                } catch (e: Exception) {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         progressMessage = "",
-                        errorMessage = err.message ?: "Failed to extract text from document."
+                        errorMessage = "Failed to load document: ${e.localizedMessage ?: "Unknown error"}"
                     )
                 }
-            )
+            }
         }
     }
 
     fun startSummarization() {
-        val currentText = _uiState.value.inputText.trim()
-        if (currentText.isBlank()) {
+        val hasFile = _uiState.value.selectedFileBase64 != null
+        val hasText = _uiState.value.inputText.isNotBlank()
+
+        if (!hasFile && !hasText) {
             _uiState.value = _uiState.value.copy(errorMessage = "Please enter text or select a document.")
             return
         }
@@ -143,13 +182,28 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 customPrompt = _uiState.value.customPrompt.ifBlank { null }
             )
 
-            val result = hierarchicalSummarizer.summarize(
-                inputText = currentText,
-                config = config,
-                onProgressUpdate = { progress ->
-                    _uiState.value = _uiState.value.copy(progressMessage = progress)
-                }
-            )
+            val result = if (hasFile) {
+                hierarchicalSummarizer.summarizeFile(
+                    fileData = GeminiFileData(
+                        mimeType = _uiState.value.selectedFileMimeType ?: "application/pdf",
+                        base64Data = _uiState.value.selectedFileBase64!!
+                    ),
+                    fileName = _uiState.value.selectedFileName ?: "Document",
+                    userInstructions = _uiState.value.inputText.ifBlank { null },
+                    config = config,
+                    onProgressUpdate = { progress ->
+                        _uiState.value = _uiState.value.copy(progressMessage = progress)
+                    }
+                )
+            } else {
+                hierarchicalSummarizer.summarizeText(
+                    inputText = _uiState.value.inputText.trim(),
+                    config = config,
+                    onProgressUpdate = { progress ->
+                        _uiState.value = _uiState.value.copy(progressMessage = progress)
+                    }
+                )
+            }
 
             result.fold(
                 onSuccess = { summaryResult ->
@@ -163,10 +217,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     if (settingsDataStore.saveHistoryFlow.first()) {
                         val saveOrig = settingsDataStore.saveOriginalTextFlow.first()
                         val title = _uiState.value.selectedFileName ?: "Text Summary"
+                        val originalTextToSave = if (hasFile) {
+                            "[Document: ${_uiState.value.selectedFileName}]"
+                        } else if (saveOrig) {
+                            _uiState.value.inputText
+                        } else {
+                            "[Original text omitted per user settings]"
+                        }
+
                         database.historyDao().insertHistory(
                             HistoryEntity(
                                 title = title,
-                                originalText = if (saveOrig) currentText else "[Original text omitted per user settings]",
+                                originalText = originalTextToSave,
                                 summaryText = summaryResult.summaryText,
                                 modelUsed = summaryResult.modelUsed,
                                 accountUsed = summaryResult.accountUsed,
@@ -206,4 +268,3 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
-

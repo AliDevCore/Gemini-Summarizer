@@ -4,6 +4,7 @@ import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.QuotaStateEntity
 import com.gemini.summarizer.core.network.GeminiApiClient
 import com.gemini.summarizer.core.network.GeminiApiResult
+import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.core.security.SecurityManager
 import kotlinx.coroutines.delay
 
@@ -28,6 +29,7 @@ class AutoRotationEngine(
     suspend fun executeWithAutoRotation(
         prompt: String,
         systemInstruction: String? = null,
+        fileData: GeminiFileData? = null,
         onProgressUpdate: ((String) -> Unit)? = null
     ): RotationExecutionResult {
         val now = System.currentTimeMillis()
@@ -76,7 +78,8 @@ class AutoRotationEngine(
                     val accountDisplayName = account?.name ?: "Key #${keyEntity.id}"
 
                     totalAttempts++
-                    onProgressUpdate?.invoke("Connecting with ${accountDisplayName} on ${model.displayName}...")
+                    val targetMsg = if (fileData != null) "Uploading & analyzing document" else "Connecting"
+                    onProgressUpdate?.invoke("$targetMsg with ${accountDisplayName} on ${model.displayName}...")
 
                     var retryCount = 0
                     val maxRetries = 2
@@ -87,7 +90,8 @@ class AutoRotationEngine(
                             modelId = model.id,
                             apiKey = rawApiKey,
                             prompt = prompt,
-                            systemInstruction = systemInstruction
+                            systemInstruction = systemInstruction,
+                            fileData = fileData
                         )
 
                         if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {

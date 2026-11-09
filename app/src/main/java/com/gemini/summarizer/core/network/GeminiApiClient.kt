@@ -20,6 +20,11 @@ sealed class GeminiApiResult<out T> {
     data class RequestError(val message: String) : GeminiApiResult<Nothing>()
 }
 
+data class GeminiFileData(
+    val mimeType: String,
+    val base64Data: String
+)
+
 data class DiscoveredModel(
     val id: String,
     val displayName: String,
@@ -33,8 +38,8 @@ class GeminiApiClient {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(90, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
@@ -44,7 +49,8 @@ class GeminiApiClient {
         modelId: String,
         apiKey: String,
         prompt: String,
-        systemInstruction: String? = null
+        systemInstruction: String? = null,
+        fileData: GeminiFileData? = null
     ): GeminiApiResult<String> = withContext(Dispatchers.IO) {
         val cleanModel = modelId.removePrefix("models/")
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
@@ -53,9 +59,22 @@ class GeminiApiClient {
         val contentsArray = com.google.gson.JsonArray()
         val contentObj = JsonObject()
         val partsArray = com.google.gson.JsonArray()
-        val partObj = JsonObject()
-        partObj.addProperty("text", prompt)
-        partsArray.add(partObj)
+
+        // 1. If a binary file (PDF/Image/Text) is attached, add it natively as inlineData
+        if (fileData != null) {
+            val filePart = JsonObject()
+            val inlineDataObj = JsonObject()
+            inlineDataObj.addProperty("mimeType", fileData.mimeType)
+            inlineDataObj.addProperty("data", fileData.base64Data)
+            filePart.add("inlineData", inlineDataObj)
+            partsArray.add(filePart)
+        }
+
+        // 2. Add the text prompt part
+        val textPartObj = JsonObject()
+        textPartObj.addProperty("text", prompt)
+        partsArray.add(textPartObj)
+
         contentObj.add("parts", partsArray)
         contentsArray.add(contentObj)
         rootJson.add("contents", contentsArray)
@@ -122,7 +141,6 @@ class GeminiApiClient {
                     }
                     else -> {
                         val errorMessage = parseErrorMessage(responseBody) ?: "Request error (HTTP $code)"
-                        // Check if Google returned a deprecation or model unavailable notice in a 400 error
                         if (errorMessage.contains("no longer available", ignoreCase = true) ||
                             errorMessage.contains("not found", ignoreCase = true) ||
                             errorMessage.contains("update your code to use", ignoreCase = true)
