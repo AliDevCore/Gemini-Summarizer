@@ -78,11 +78,11 @@ class AutoRotationEngine(
                     val accountDisplayName = account?.name ?: "Key #${keyEntity.id}"
 
                     totalAttempts++
-                    val targetMsg = if (fileData != null) "Uploading & analyzing document" else "Connecting"
-                    onProgressUpdate?.invoke("$targetMsg with ${accountDisplayName} on ${model.displayName}...")
+                    val targetMsg = if (fileData != null) "Transmitting document to" else "Querying"
+                    onProgressUpdate?.invoke("$targetMsg ${model.displayName} with ${accountDisplayName}...")
 
                     var retryCount = 0
-                    val maxRetries = 2
+                    val maxRetries = 1
                     var callResult: GeminiApiResult<String>
 
                     while (true) {
@@ -96,7 +96,8 @@ class AutoRotationEngine(
 
                         if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
                             retryCount++
-                            delay((1000L * retryCount)) // Exponential backoff (1s, 2s)
+                            onProgressUpdate?.invoke("Network lag on ${model.displayName} (${callResult.message}). Retrying in 1s...")
+                            delay(1000L)
                         } else {
                             break
                         }
@@ -104,6 +105,7 @@ class AutoRotationEngine(
 
                     when (callResult) {
                         is GeminiApiResult.Success -> {
+                            onProgressUpdate?.invoke("Success! Generated summary via ${model.displayName}.")
                             database.apiKeyDao().updateLastUsed(keyEntity.id, System.currentTimeMillis())
                             return RotationExecutionResult.Success(
                                 outputText = callResult.data,
@@ -113,7 +115,7 @@ class AutoRotationEngine(
                             )
                         }
                         is GeminiApiResult.ModelUnavailable -> {
-                            onProgressUpdate?.invoke("Model ${model.id} is deprecated or unavailable. Rotating to next model...")
+                            onProgressUpdate?.invoke("Model ${model.id} returned 404 (unavailable). Rotating to next model...")
                             database.modelDao().setModelEnabled(model.id, false)
                             modelUnavailableForAccount = true
                             break
@@ -130,7 +132,7 @@ class AutoRotationEngine(
                                     failureReason = callResult.message
                                 )
                             )
-                            onProgressUpdate?.invoke("Rate limit (429) hit for Project $projectId on ${model.id}. Rotating...")
+                            onProgressUpdate?.invoke("Quota limit (429) on ${model.displayName}. Rotating...")
                             break // Try next project
                         }
                         is GeminiApiResult.InvalidKey -> {
@@ -139,15 +141,15 @@ class AutoRotationEngine(
                                 isInvalid = true,
                                 message = "Key invalid or unauthorized (HTTP 401/403)"
                             )
-                            onProgressUpdate?.invoke("Key ${keyEntity.id} is invalid. Trying next key...")
+                            onProgressUpdate?.invoke("Key ${keyEntity.id} unauthorized (401/403). Rotating to next key...")
                         }
                         is GeminiApiResult.RequestError -> {
-                            onProgressUpdate?.invoke("Model ${model.id} error (${callResult.message}). Rotating to next model...")
+                            onProgressUpdate?.invoke("Model ${model.id} request error (${callResult.message}). Rotating...")
                             modelUnavailableForAccount = true
                             break
                         }
                         is GeminiApiResult.TransientError -> {
-                            onProgressUpdate?.invoke("Temporary network glitch. Trying next option...")
+                            onProgressUpdate?.invoke("Timeout/Network error on ${model.displayName} (${callResult.message}). Rotating...")
                         }
                     }
                 }

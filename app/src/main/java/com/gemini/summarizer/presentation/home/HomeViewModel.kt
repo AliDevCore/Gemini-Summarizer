@@ -17,17 +17,22 @@ import com.gemini.summarizer.domain.engine.HierarchicalSummarizer
 import com.gemini.summarizer.domain.engine.SummarizationFinalResult
 import com.gemini.summarizer.domain.model.SummaryConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class HomeUiState(
     val inputText: String = "",
     val isLoading: Boolean = false,
     val progressMessage: String = "",
+    val liveLogs: List<String> = emptyList(),
     val selectedFileName: String? = null,
     val selectedFileBase64: String? = null,
     val selectedFileMimeType: String? = null,
@@ -49,8 +54,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val rotationEngine = AutoRotationEngine(database, securityManager)
     private val hierarchicalSummarizer = HierarchicalSummarizer(rotationEngine)
 
+    private var summarizationJob: Job? = null
+    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    private fun formatLog(msg: String): String = "[${timeFormat.format(Date())}] $msg"
 
     init {
         viewModelScope.launch {
@@ -159,6 +169,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun cancelSummarization() {
+        summarizationJob?.cancel()
+        summarizationJob = null
+        val cancelLog = formatLog("Process cancelled by user.")
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            progressMessage = "",
+            errorMessage = "Summarization cancelled by user.",
+            liveLogs = _uiState.value.liveLogs + cancelLog
+        )
+    }
+
     fun startSummarization() {
         val hasFile = _uiState.value.selectedFileBase64 != null
         val hasText = _uiState.value.inputText.isNotBlank()
@@ -168,20 +190,24 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isLoading = true,
-                errorMessage = null,
-                progressMessage = "Initializing Gemini auto-rotation..."
-            )
+        summarizationJob?.cancel()
+        val startLog = formatLog("Starting summarization process...")
 
-            val config = SummaryConfig(
-                targetLanguage = _uiState.value.targetLanguage,
-                summaryLength = _uiState.value.summaryLength,
-                summaryType = _uiState.value.summaryType,
-                customPrompt = _uiState.value.customPrompt.ifBlank { null }
-            )
+        _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            errorMessage = null,
+            progressMessage = "Initializing Gemini auto-rotation...",
+            liveLogs = listOf(startLog)
+        )
 
+        val config = SummaryConfig(
+            targetLanguage = _uiState.value.targetLanguage,
+            summaryLength = _uiState.value.summaryLength,
+            summaryType = _uiState.value.summaryType,
+            customPrompt = _uiState.value.customPrompt.ifBlank { null }
+        )
+
+        summarizationJob = viewModelScope.launch {
             val result = if (hasFile) {
                 hierarchicalSummarizer.summarizeFile(
                     fileData = GeminiFileData(
@@ -192,7 +218,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     userInstructions = _uiState.value.inputText.ifBlank { null },
                     config = config,
                     onProgressUpdate = { progress ->
-                        _uiState.value = _uiState.value.copy(progressMessage = progress)
+                        val logEntry = formatLog(progress)
+                        _uiState.value = _uiState.value.copy(
+                            progressMessage = progress,
+                            liveLogs = _uiState.value.liveLogs + logEntry
+                        )
                     }
                 )
             } else {
@@ -200,17 +230,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     inputText = _uiState.value.inputText.trim(),
                     config = config,
                     onProgressUpdate = { progress ->
-                        _uiState.value = _uiState.value.copy(progressMessage = progress)
+                        val logEntry = formatLog(progress)
+                        _uiState.value = _uiState.value.copy(
+                            progressMessage = progress,
+                            liveLogs = _uiState.value.liveLogs + logEntry
+                        )
                     }
                 )
             }
 
             result.fold(
                 onSuccess = { summaryResult ->
+                    val successLog = formatLog("Summary generated successfully!")
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         progressMessage = "",
-                        summaryResult = summaryResult
+                        summaryResult = summaryResult,
+                        liveLogs = _uiState.value.liveLogs + successLog
                     )
 
                     // Save to history if enabled
@@ -243,10 +279,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 },
                 onFailure = { error ->
+                    val failLog = formatLog("Error: ${error.message ?: "Unknown error"}")
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         progressMessage = "",
-                        errorMessage = error.message ?: "Summarization failed."
+                        errorMessage = error.message ?: "Summarization failed.",
+                        liveLogs = _uiState.value.liveLogs + failLog
                     )
                 }
             )

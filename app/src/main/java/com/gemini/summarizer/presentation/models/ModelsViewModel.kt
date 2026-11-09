@@ -161,14 +161,14 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 when (val result = apiClient.listModels(rawKey)) {
                     is GeminiApiResult.Success -> {
                         for (discovered in result.data) {
-                            val cleanId = discovered.id.trim()
-                            val isGeminiTextModel = cleanId.startsWith("gemini-", ignoreCase = true) &&
-                                    discovered.displayName.startsWith("Gemini", ignoreCase = true)
+                            val cleanId = discovered.id.trim().lowercase()
+                            val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
+                                    (cleanId.contains("flash") || cleanId.contains("pro"))
 
-                            val isExcluded = cleanId.contains("2.5") ||
-                                    cleanId.contains("1.0") ||
-                                    cleanId.endsWith("-001") ||
-                                    cleanId.endsWith("-002") ||
+                            val isExcluded = cleanId.contains("robotics") ||
+                                    cleanId.contains("omni") ||
+                                    cleanId.contains("nano") ||
+                                    cleanId.contains("banana") ||
                                     cleanId.contains("antigravity") ||
                                     cleanId.contains("deep-research") ||
                                     cleanId.contains("gemma") ||
@@ -177,9 +177,13 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                                     cleanId.contains("imagen") ||
                                     cleanId.contains("learnlm") ||
                                     cleanId.contains("tts") ||
-                                    cleanId.contains("whisper")
+                                    cleanId.contains("whisper") ||
+                                    cleanId.contains("2.5") ||
+                                    cleanId.contains("1.0") ||
+                                    cleanId.endsWith("-001") ||
+                                    cleanId.endsWith("-002")
 
-                            if (!isGeminiTextModel || isExcluded) continue
+                            if (!isGeminiFlashOrPro || isExcluded) continue
 
                             val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
                             val modelEntity = ModelEntity(

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -288,7 +289,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
-            // Progress Indicator
+            // Progress Indicator & Cancel / Stop Button
             if (uiState.isLoading) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -299,31 +300,80 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
                         Text(
                             text = uiState.progressMessage,
                             style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { viewModel.cancelSummarization() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onError)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Cancel / Stop Summarization", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError)
+                        }
+                    }
+                }
+            }
+
+            // Live Diagnostic Activity Log
+            if (uiState.liveLogs.isNotEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Activity & Diagnostic Log",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (uiState.isLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        uiState.liveLogs.takeLast(6).forEach { logLine ->
+                            Text(
+                                text = logLine,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
 
             // Summarize Button
-            Button(
-                onClick = { viewModel.startSummarization() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                enabled = !uiState.isLoading && (uiState.inputText.isNotBlank() || uiState.selectedFileName != null),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (uiState.selectedFileName != null) "Summarize Document" else "Summarize with Gemini",
-                    style = MaterialTheme.typography.titleMedium
-                )
+            if (!uiState.isLoading) {
+                Button(
+                    onClick = { viewModel.startSummarization() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    enabled = uiState.inputText.isNotBlank() || uiState.selectedFileName != null,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (uiState.selectedFileName != null) "Summarize Document" else "Summarize with Gemini",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
             }
 
             // Results Section

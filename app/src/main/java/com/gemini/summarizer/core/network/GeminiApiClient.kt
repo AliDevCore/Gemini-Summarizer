@@ -37,9 +37,9 @@ data class DiscoveredModel(
 class GeminiApiClient {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .writeTimeout(90, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(25, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
@@ -177,7 +177,7 @@ class GeminiApiClient {
                     for (elem in modelsArray) {
                         val mObj = elem.asJsonObject
                         val rawName = mObj.get("name")?.asString ?: ""
-                        val cleanId = rawName.removePrefix("models/")
+                        val cleanId = rawName.removePrefix("models/").trim().lowercase()
                         val displayName = mObj.get("displayName")?.asString ?: cleanId
                         val description = mObj.get("description")?.asString ?: ""
                         val inputTokenLimit = mObj.get("inputTokenLimit")?.asInt ?: 32768
@@ -194,13 +194,14 @@ class GeminiApiClient {
                             }
                         }
 
-                        val isGeminiTextModel = cleanId.startsWith("gemini-", ignoreCase = true) &&
-                                displayName.startsWith("Gemini", ignoreCase = true)
+                        // Strictly require Gemini Flash or Gemini Pro text models
+                        val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
+                                (cleanId.contains("flash") || cleanId.contains("pro"))
 
-                        val isExcluded = cleanId.contains("2.5") ||
-                                cleanId.contains("1.0") ||
-                                cleanId.endsWith("-001") ||
-                                cleanId.endsWith("-002") ||
+                        val isExcluded = cleanId.contains("robotics") ||
+                                cleanId.contains("omni") ||
+                                cleanId.contains("nano") ||
+                                cleanId.contains("banana") ||
                                 cleanId.contains("antigravity") ||
                                 cleanId.contains("deep-research") ||
                                 cleanId.contains("gemma") ||
@@ -209,9 +210,13 @@ class GeminiApiClient {
                                 cleanId.contains("imagen") ||
                                 cleanId.contains("learnlm") ||
                                 cleanId.contains("tts") ||
-                                cleanId.contains("whisper")
+                                cleanId.contains("whisper") ||
+                                cleanId.contains("2.5") ||
+                                cleanId.contains("1.0") ||
+                                cleanId.endsWith("-001") ||
+                                cleanId.endsWith("-002")
 
-                        if (supportsText && isGeminiTextModel && !isExcluded) {
+                        if (supportsText && isGeminiFlashOrPro && !isExcluded) {
                             result.add(
                                 DiscoveredModel(
                                     id = cleanId,
