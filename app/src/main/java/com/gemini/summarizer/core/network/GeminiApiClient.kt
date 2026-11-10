@@ -1,5 +1,6 @@
 package com.gemini.summarizer.core.network
 
+import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CancellationException
@@ -246,29 +247,7 @@ class GeminiApiClient {
                             }
                         }
 
-                        // Strictly require Gemini Flash or Gemini Pro text models
-                        val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
-                                (cleanId.contains("flash") || cleanId.contains("pro"))
-
-                        val isExcluded = cleanId.contains("robotics") ||
-                                cleanId.contains("omni") ||
-                                cleanId.contains("nano") ||
-                                cleanId.contains("banana") ||
-                                cleanId.contains("antigravity") ||
-                                cleanId.contains("deep-research") ||
-                                cleanId.contains("gemma") ||
-                                cleanId.contains("embedding") ||
-                                cleanId.contains("aqa") ||
-                                cleanId.contains("imagen") ||
-                                cleanId.contains("learnlm") ||
-                                cleanId.contains("tts") ||
-                                cleanId.contains("whisper") ||
-                                cleanId.contains("2.5") ||
-                                cleanId.contains("1.0") ||
-                                cleanId.endsWith("-001") ||
-                                cleanId.endsWith("-002")
-
-                        if (supportsText && isGeminiFlashOrPro && !isExcluded) {
+                        if (supportsText && ModelFilter.isAllowedTextModel(cleanId, displayName)) {
                             result.add(
                                 DiscoveredModel(
                                     id = cleanId,

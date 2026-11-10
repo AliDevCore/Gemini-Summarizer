@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.ModelEntity
+import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.network.GeminiApiClient
 import com.gemini.summarizer.core.network.GeminiApiResult
