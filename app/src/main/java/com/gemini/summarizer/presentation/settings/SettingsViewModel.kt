@@ -85,6 +85,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             withContext(Dispatchers.IO) {
                 securityManager.clearAllKeys()
                 database.apiKeyDao().deleteAllKeys()
+                database.accountDao().deleteAllAccounts()
                 database.quotaStateDao().clearAll()
             }
             _uiState.value = _uiState.value.copy(message = "All API Keys purged from Keystore and database.")

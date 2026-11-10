@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ApiKeyDao {
+    @Query("SELECT * FROM api_keys ORDER BY id ASC")
+    fun getAllApiKeysFlow(): Flow<List<ApiKeyEntity>>
+
     @Query("SELECT * FROM api_keys WHERE accountId = :accountId")
     fun getKeysForAccountFlow(accountId: Long): Flow<List<ApiKeyEntity>>
 

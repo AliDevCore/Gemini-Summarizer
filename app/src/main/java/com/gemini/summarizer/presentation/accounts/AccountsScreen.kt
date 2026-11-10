@@ -21,6 +21,14 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
     var inputLabel by remember { mutableStateOf("") }
     var inputProjectId by remember { mutableStateOf("") }
 
+    LaunchedEffect(uiState.showAddKeyDialog) {
+        if (!uiState.showAddKeyDialog) {
+            inputKey = ""
+            inputLabel = ""
+            inputProjectId = ""
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -32,6 +40,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                 onClick = {
                     inputKey = ""
                     inputLabel = ""
+                    inputProjectId = ""
                     viewModel.openAddKeyDialog()
                 },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -41,43 +50,74 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
             )
         }
     ) { padding ->
-        if (uiState.keysList.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.Key,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.outline
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = "No API Keys Added Yet",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Tap the 'Add API Key' button below to directly paste your Gemini API key from Google AI Studio. You can add multiple keys for automatic rotation.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.outline
-                    )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // General Error Banner on Main Screen
+            if (uiState.errorMessage != null && !uiState.showAddKeyDialog) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = uiState.errorMessage ?: "",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { viewModel.clearErrorMessage() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                        }
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+
+            if (uiState.keysList.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.Key,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.outline
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            text = "No API Keys Added Yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Tap the 'Add API Key' button below to directly paste your Gemini API key from Google AI Studio. You can add multiple keys for automatic rotation.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 items(uiState.keysList, key = { it.id }) { item ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -154,16 +194,32 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
         // Add API Key Dialog
         if (uiState.showAddKeyDialog) {
             AlertDialog(
-                onDismissRequest = { viewModel.dismissAddKeyDialog() },
+                onDismissRequest = { if (!uiState.isLoading) viewModel.dismissAddKeyDialog() },
                 title = { Text("Add Gemini API Key") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Paste your API Key directly from Google AI Studio:")
+
+                        uiState.errorMessage?.let { errorMsg ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = errorMsg,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+
                         OutlinedTextField(
                             value = inputKey,
                             onValueChange = { inputKey = it },
                             label = { Text("API Key (e.g. AIzaSy...)") },
                             singleLine = true,
+                            enabled = !uiState.isLoading,
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
@@ -171,6 +227,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                             onValueChange = { inputLabel = it },
                             label = { Text("Label (Optional, e.g. Personal, Work)") },
                             singleLine = true,
+                            enabled = !uiState.isLoading,
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
@@ -178,6 +235,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                             onValueChange = { inputProjectId = it },
                             label = { Text("Project ID (Optional, e.g. my-cloud-project)") },
                             singleLine = true,
+                            enabled = !uiState.isLoading,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -186,17 +244,25 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                     Button(
                         onClick = {
                             viewModel.addDirectApiKey(inputKey, inputLabel, inputProjectId)
-                            inputKey = ""
-                            inputLabel = ""
-                            inputProjectId = ""
                         },
-                        enabled = inputKey.isNotBlank()
+                        enabled = inputKey.isNotBlank() && !uiState.isLoading
                     ) {
-                        Text("Save Key")
+                        if (uiState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text("Save Key")
+                        }
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { viewModel.dismissAddKeyDialog() }) {
+                    TextButton(
+                        onClick = { viewModel.dismissAddKeyDialog() },
+                        enabled = !uiState.isLoading
+                    ) {
                         Text("Cancel")
                     }
                 }

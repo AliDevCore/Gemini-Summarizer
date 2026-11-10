@@ -1,6 +1,7 @@
 package com.gemini.summarizer.presentation.accounts
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -45,30 +47,30 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<AccountsUiState> = _uiState.asStateFlow()
 
     init {
-        // Single persistent observer flow for all accounts and keys
+        // Persistent combined observer flow for all accounts and api_keys
         viewModelScope.launch {
-            database.accountDao().getAllAccountsFlow().collectLatest { accounts ->
-                val displayList = mutableListOf<ApiKeyDisplayItem>()
-                for (account in accounts) {
-                    val keys = database.apiKeyDao().getKeysForAccount(account.id)
-                    for (k in keys) {
+            database.accountDao().getAllAccountsFlow()
+                .combine(database.apiKeyDao().getAllApiKeysFlow()) { accounts, keys ->
+                    val accountMap = accounts.associateBy { it.id }
+                    keys.map { k ->
+                        val account = accountMap[k.accountId]
+                        val label = account?.name ?: "Key #${k.id}"
                         val raw = securityManager.getApiKey(k.keyIdentifier)
                         val masked = if (raw != null) SecurityManager.maskApiKey(raw) else "Missing in Storage"
-                        displayList.add(
-                            ApiKeyDisplayItem(
-                                id = k.id,
-                                accountId = account.id,
-                                label = account.name,
-                                maskedKey = masked,
-                                isActive = k.isActive,
-                                isInvalid = k.isInvalid,
-                                statusMessage = k.statusMessage
-                            )
+                        ApiKeyDisplayItem(
+                            id = k.id,
+                            accountId = k.accountId,
+                            label = label,
+                            maskedKey = masked,
+                            isActive = k.isActive,
+                            isInvalid = k.isInvalid,
+                            statusMessage = k.statusMessage
                         )
                     }
                 }
-                _uiState.update { it.copy(keysList = displayList) }
-            }
+                .collectLatest { displayList ->
+                    _uiState.update { it.copy(keysList = displayList) }
+                }
         }
     }
 
@@ -80,53 +82,86 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(showAddKeyDialog = false, errorMessage = null) }
     }
 
+    fun clearErrorMessage() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
     fun addDirectApiKey(rawKey: String, customLabel: String?, customProjectId: String? = null) {
         val cleanKey = rawKey.trim()
-        if (cleanKey.isBlank()) return
+        if (cleanKey.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "API key cannot be empty.") }
+            return
+        }
 
         viewModelScope.launch {
-            // Check for duplicate API key
-            val allAccounts = database.accountDao().getAllAccountsList()
-            for (acc in allAccounts) {
-                val existingKeys = database.apiKeyDao().getKeysForAccount(acc.id)
-                for (k in existingKeys) {
-                    val stored = securityManager.getApiKey(k.keyIdentifier)
-                    if (stored != null && stored.trim() == cleanKey) {
-                        _uiState.update {
-                            it.copy(errorMessage = "This API key has already been added as '${acc.name}'.")
+            try {
+                _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+                // Check for duplicate API key
+                val allAccounts = database.accountDao().getAllAccountsList()
+                for (acc in allAccounts) {
+                    val existingKeys = database.apiKeyDao().getKeysForAccount(acc.id)
+                    for (k in existingKeys) {
+                        val stored = securityManager.getApiKey(k.keyIdentifier)
+                        if (stored != null && stored.trim() == cleanKey) {
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    errorMessage = "This API key has already been added as '${acc.name}'."
+                                )
+                            }
+                            return@launch
                         }
-                        return@launch
                     }
                 }
+
+                val keyNumber = _uiState.value.keysList.size + 1
+                val label = if (customLabel.isNullOrBlank()) "Key #$keyNumber" else customLabel.trim()
+
+                // 1. Verify and store the key in encrypted storage first
+                val keyIdentifier = UUID.randomUUID().toString()
+                val stored = securityManager.storeApiKey(keyIdentifier, cleanKey)
+                if (!stored) {
+                    throw IllegalStateException("Failed to commit key to secure encrypted storage.")
+                }
+
+                // 2. Create account slot
+                val accountId = database.accountDao().insertAccount(
+                    AccountEntity(
+                        name = label,
+                        priority = keyNumber,
+                        isEnabled = true
+                    )
+                )
+
+                // 3. Create ApiKeyEntity associated with the account
+                val assignedProjectId = if (!customProjectId.isNullOrBlank()) customProjectId.trim() else "project-$accountId"
+                database.apiKeyDao().insertApiKey(
+                    ApiKeyEntity(
+                        accountId = accountId,
+                        keyIdentifier = keyIdentifier,
+                        projectId = assignedProjectId,
+                        isActive = true,
+                        statusMessage = "Ready"
+                    )
+                )
+
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        showAddKeyDialog = false,
+                        errorMessage = null
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("AccountsViewModel", "Error saving API key", e)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "Error saving API key: ${e.message ?: "Unknown error"}"
+                    )
+                }
             }
-
-            val keyNumber = _uiState.value.keysList.size + 1
-            val label = if (customLabel.isNullOrBlank()) "Key #$keyNumber" else customLabel.trim()
-
-            // Create account slot automatically for this key
-            val accountId = database.accountDao().insertAccount(
-                AccountEntity(
-                    name = label,
-                    priority = keyNumber,
-                    isEnabled = true
-                )
-            )
-
-            val assignedProjectId = if (!customProjectId.isNullOrBlank()) customProjectId.trim() else "project-$accountId"
-            val keyIdentifier = UUID.randomUUID().toString()
-            securityManager.storeApiKey(keyIdentifier, cleanKey)
-
-            database.apiKeyDao().insertApiKey(
-                ApiKeyEntity(
-                    accountId = accountId,
-                    keyIdentifier = keyIdentifier,
-                    projectId = assignedProjectId,
-                    isActive = true,
-                    statusMessage = "Ready"
-                )
-            )
-
-            _uiState.update { it.copy(showAddKeyDialog = false, errorMessage = null) }
         }
     }
 
