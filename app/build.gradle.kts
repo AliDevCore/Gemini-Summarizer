@@ -14,9 +14,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("${rootDir}/keystore/release.jks")
-            storePassword = "gemini_summarizer_secure_keystore_2026"
-            keyAlias = "gemini_key"
-            keyPassword = "gemini_summarizer_secure_keystore_2026"
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: (project.findProperty("KEYSTORE_PASSWORD") as? String) ?: "gemini_summarizer_secure_keystore_2026"
+            keyAlias = System.getenv("KEY_ALIAS") ?: (project.findProperty("KEY_ALIAS") as? String) ?: "gemini_key"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: (project.findProperty("KEY_PASSWORD") as? String) ?: "gemini_summarizer_secure_keystore_2026"
         }
     }
 
@@ -45,7 +45,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -104,9 +104,10 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
 
-    // Networking (OkHttp) & JSON
+    // Networking (OkHttp), Jsoup & JSON
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("org.jsoup:jsoup:1.17.2")
     implementation("com.google.code.gson:gson:2.10.1")
 
     // Coroutines

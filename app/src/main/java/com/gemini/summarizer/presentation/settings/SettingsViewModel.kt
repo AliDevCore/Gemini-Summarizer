@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.security.SecurityManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val defaultLanguage: String = "Auto",
@@ -80,16 +82,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun clearAllSecureKeys() {
         viewModelScope.launch {
-            securityManager.clearAllKeys()
-            _uiState.value = _uiState.value.copy(message = "All API Keys purged from Keystore securely.")
+            withContext(Dispatchers.IO) {
+                securityManager.clearAllKeys()
+                database.apiKeyDao().deleteAllKeys()
+                database.quotaStateDao().clearAll()
+            }
+            _uiState.value = _uiState.value.copy(message = "All API Keys purged from Keystore and database.")
         }
     }
 
     fun clearAllData() {
         viewModelScope.launch {
-            securityManager.clearAllKeys()
-            database.clearAllTables()
-            _uiState.value = _uiState.value.copy(message = "All app databases and secure keys cleared.")
+            withContext(Dispatchers.IO) {
+                securityManager.clearAllKeys()
+                database.clearAllTables()
+                // Re-seed default models so models table is never left completely empty
+                database.modelDao().insertModels(AppDatabase.getDefaultModels())
+                // Reset settings to defaults
+                settingsDataStore.setDefaultLanguage("Auto")
+                settingsDataStore.setDefaultLength("Medium")
+                settingsDataStore.setDefaultType("General")
+            }
+            _uiState.value = _uiState.value.copy(message = "All app databases, settings, and secure keys cleared.")
         }
     }
 }

@@ -91,7 +91,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Active: $enabledCount of $totalModels",
+                    text = "Active: $enabledCount / $totalModels",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -100,14 +100,14 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilledTonalButton(
                         onClick = { viewModel.selectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.defaultMinSize(minHeight = 32.dp, minWidth = 1.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = "Select All",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             maxLines = 1,
                             softWrap = false
                         )
@@ -115,14 +115,14 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
 
                     OutlinedButton(
                         onClick = { viewModel.deselectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.defaultMinSize(minHeight = 32.dp, minWidth = 1.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = "Select None",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             maxLines = 1,
                             softWrap = false
                         )

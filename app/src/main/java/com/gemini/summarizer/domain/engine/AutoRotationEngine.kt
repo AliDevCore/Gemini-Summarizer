@@ -144,6 +144,14 @@ class AutoRotationEngine(
                             onProgressUpdate?.invoke("Key ${keyEntity.id} unauthorized (401/403). Rotating to next key...")
                         }
                         is GeminiApiResult.RequestError -> {
+                            // If Google blocks the IP / requires VPN or content is blocked by safety, abort immediately
+                            if (callResult.message.contains("VPN", ignoreCase = true) ||
+                                callResult.message.contains("location", ignoreCase = true) ||
+                                callResult.message.contains("blocked", ignoreCase = true) ||
+                                callResult.message.contains("Safety", ignoreCase = true)
+                            ) {
+                                return RotationExecutionResult.Failure(callResult.message)
+                            }
                             onProgressUpdate?.invoke("Model ${model.id} request error (${callResult.message}). Rotating...")
                             modelUnavailableForAccount = true
                             break

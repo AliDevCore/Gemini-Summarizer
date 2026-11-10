@@ -6,11 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.AccountEntity
 import com.gemini.summarizer.core.database.entity.ApiKeyEntity
+import com.gemini.summarizer.core.network.GeminiApiClient
+import com.gemini.summarizer.core.network.GeminiApiResult
 import com.gemini.summarizer.core.security.SecurityManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -35,6 +38,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 
     private val database = AppDatabase.getInstance(application)
     private val securityManager = SecurityManager(application)
+    private val apiClient = GeminiApiClient()
 
     private val _uiState = MutableStateFlow(AccountsUiState())
     val uiState: StateFlow<AccountsUiState> = _uiState.asStateFlow()
@@ -50,13 +54,14 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 for (account in accounts) {
                     val keys = database.apiKeyDao().getKeysForAccount(account.id)
                     for (k in keys) {
-                        val raw = securityManager.getApiKey(k.keyIdentifier) ?: "Missing"
+                        val raw = securityManager.getApiKey(k.keyIdentifier)
+                        val masked = if (raw != null) SecurityManager.maskApiKey(raw) else "Missing in Storage"
                         displayList.add(
                             ApiKeyDisplayItem(
                                 id = k.id,
                                 accountId = account.id,
                                 label = account.name,
-                                maskedKey = SecurityManager.maskApiKey(raw),
+                                maskedKey = masked,
                                 isActive = k.isActive,
                                 isInvalid = k.isInvalid,
                                 statusMessage = k.statusMessage
@@ -64,17 +69,17 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                 }
-                _uiState.value = _uiState.value.copy(keysList = displayList)
+                _uiState.update { it.copy(keysList = displayList) }
             }
         }
     }
 
     fun openAddKeyDialog() {
-        _uiState.value = _uiState.value.copy(showAddKeyDialog = true, errorMessage = null)
+        _uiState.update { it.copy(showAddKeyDialog = true, errorMessage = null) }
     }
 
     fun dismissAddKeyDialog() {
-        _uiState.value = _uiState.value.copy(showAddKeyDialog = false)
+        _uiState.update { it.copy(showAddKeyDialog = false) }
     }
 
     fun addDirectApiKey(rawKey: String, customLabel: String?) {
@@ -107,7 +112,38 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 )
             )
 
-            _uiState.value = _uiState.value.copy(showAddKeyDialog = false)
+            _uiState.update { it.copy(showAddKeyDialog = false) }
+            loadKeys()
+        }
+    }
+
+    fun testApiKey(item: ApiKeyDisplayItem) {
+        viewModelScope.launch {
+            val key = database.apiKeyDao().getKeysForAccount(item.accountId).find { it.id == item.id } ?: return@launch
+            val raw = securityManager.getApiKey(key.keyIdentifier)
+            if (raw.isNullOrBlank()) {
+                database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Key missing in secure storage")
+                loadKeys()
+                return@launch
+            }
+
+            database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Testing connection...")
+            loadKeys()
+
+            when (val res = apiClient.listModels(raw)) {
+                is GeminiApiResult.Success -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Verified (${res.data.size} models)")
+                }
+                is GeminiApiResult.InvalidKey -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Invalid API key")
+                }
+                is GeminiApiResult.RateLimited -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Rate limited (429)")
+                }
+                else -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Connection checked")
+                }
+            }
             loadKeys()
         }
     }
@@ -129,6 +165,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 val keys = database.apiKeyDao().getKeysForAccount(account.id)
                 for (k in keys) {
                     securityManager.deleteApiKey(k.keyIdentifier)
+                    database.apiKeyDao().deleteApiKey(k)
                 }
                 database.accountDao().deleteAccount(account)
                 loadKeys()

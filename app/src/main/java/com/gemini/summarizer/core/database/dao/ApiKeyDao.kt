@@ -27,6 +27,9 @@ interface ApiKeyDao {
     @Delete
     suspend fun deleteApiKey(key: ApiKeyEntity)
 
+    @Query("DELETE FROM api_keys")
+    suspend fun deleteAllKeys()
+
     @Query("UPDATE api_keys SET isInvalid = :isInvalid, statusMessage = :message WHERE id = :keyId")
     suspend fun setKeyStatus(keyId: Long, isInvalid: Boolean, message: String)
 

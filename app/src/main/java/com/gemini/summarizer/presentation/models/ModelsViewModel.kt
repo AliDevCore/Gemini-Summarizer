@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.ModelEntity
+import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.network.GeminiApiClient
 import com.gemini.summarizer.core.network.GeminiApiResult
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class ModelsUiState(
@@ -48,11 +51,14 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 database.modelDao().insertModels(AppDatabase.getDefaultModels())
             }
 
-            // Ensure priority order is based on descending version
-            applyAutoPrioritySorting()
+            // Only auto-sort if user has auto-priority enabled
+            val isAutoEnabled = settingsDataStore.autoModelPriorityFlow.first()
+            if (isAutoEnabled) {
+                applyAutoPrioritySorting()
+            }
 
             database.modelDao().getAllModelsFlow().collectLatest { list ->
-                _uiState.value = _uiState.value.copy(models = list)
+                _uiState.update { it.copy(models = list) }
             }
         }
     }
@@ -60,7 +66,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     private fun observeAutoPriority() {
         viewModelScope.launch {
             settingsDataStore.autoModelPriorityFlow.collectLatest { enabled ->
-                _uiState.value = _uiState.value.copy(isAutoPriorityEnabled = enabled)
+                _uiState.update { it.copy(isAutoPriorityEnabled = enabled) }
             }
         }
     }
@@ -94,23 +100,32 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
     fun moveModelPriority(model: ModelEntity, moveUp: Boolean) {
         viewModelScope.launch {
-            val currentPriority = model.priority
-            val targetPriority = if (moveUp) (currentPriority - 1).coerceAtLeast(1) else currentPriority + 1
-            database.modelDao().setModelPriority(model.id, targetPriority)
-            settingsDataStore.setAutoModelPriority(false)
+            val allModels = database.modelDao().getAllModelsList()
+            val currentIndex = allModels.indexOfFirst { it.id == model.id }
+            if (currentIndex == -1) return@launch
+            val targetIndex = if (moveUp) currentIndex - 1 else currentIndex + 1
+            if (targetIndex in allModels.indices) {
+                val targetModel = allModels[targetIndex]
+                val currentP = model.priority
+                val targetP = targetModel.priority
+                // Swap priorities properly
+                database.modelDao().setModelPriority(model.id, targetP)
+                database.modelDao().setModelPriority(targetModel.id, currentP)
+                settingsDataStore.setAutoModelPriority(false)
+            }
         }
     }
 
-    private fun extractVersionScore(id: String): Double {
-        if (!id.startsWith("gemini-", ignoreCase = true)) return 0.0
-        if (id.contains("latest")) return 2.99
+    private fun extractVersionScore(id: String): Int {
+        if (!id.startsWith("gemini-", ignoreCase = true)) return 0
+        if (id.contains("latest")) return 2999
         val match = Regex("""^gemini-(\d+)(?:\.(\d+))?""", RegexOption.IGNORE_CASE).find(id)
         if (match != null) {
-            val major = match.groupValues[1].toDoubleOrNull() ?: 0.0
-            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toDoubleOrNull() ?: 0.0
-            return major + (minor / 10.0)
+            val major = match.groupValues[1].toIntOrNull() ?: 0
+            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
+            return (major * 1000) + minor
         }
-        return 0.0
+        return 0
     }
 
     private fun extractTierScore(id: String): Int {
@@ -161,29 +176,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 when (val result = apiClient.listModels(rawKey)) {
                     is GeminiApiResult.Success -> {
                         for (discovered in result.data) {
-                            val cleanId = discovered.id.trim().lowercase()
-                            val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
-                                    (cleanId.contains("flash") || cleanId.contains("pro"))
-
-                            val isExcluded = cleanId.contains("robotics") ||
-                                    cleanId.contains("omni") ||
-                                    cleanId.contains("nano") ||
-                                    cleanId.contains("banana") ||
-                                    cleanId.contains("antigravity") ||
-                                    cleanId.contains("deep-research") ||
-                                    cleanId.contains("gemma") ||
-                                    cleanId.contains("embedding") ||
-                                    cleanId.contains("aqa") ||
-                                    cleanId.contains("imagen") ||
-                                    cleanId.contains("learnlm") ||
-                                    cleanId.contains("tts") ||
-                                    cleanId.contains("whisper") ||
-                                    cleanId.contains("2.5") ||
-                                    cleanId.contains("1.0") ||
-                                    cleanId.endsWith("-001") ||
-                                    cleanId.endsWith("-002")
-
-                            if (!isGeminiFlashOrPro || isExcluded) continue
+                            if (!ModelFilter.isAllowedTextModel(discovered.id, discovered.displayName)) continue
 
                             val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
                             val modelEntity = ModelEntity(

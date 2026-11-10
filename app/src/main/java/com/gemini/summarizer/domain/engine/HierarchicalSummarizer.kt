@@ -18,7 +18,9 @@ class HierarchicalSummarizer(
 ) {
 
     companion object {
-        private const val MAX_WORDS_PER_CHUNK = 2500
+        // Gemini models have 1M+ token context windows. Support large single-pass inputs (up to 30,000 words)
+        // without premature fragmentation, retaining full context and reducing quota burn.
+        private const val MAX_WORDS_PER_CHUNK = 30000
     }
 
     suspend fun summarizeFile(

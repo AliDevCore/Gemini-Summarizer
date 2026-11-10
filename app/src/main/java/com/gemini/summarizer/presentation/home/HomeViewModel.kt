@@ -15,6 +15,7 @@ import com.gemini.summarizer.core.security.SecurityManager
 import com.gemini.summarizer.domain.engine.AutoRotationEngine
 import com.gemini.summarizer.domain.engine.HierarchicalSummarizer
 import com.gemini.summarizer.domain.engine.SummarizationFinalResult
+import com.gemini.summarizer.core.file.DocumentExtractor
 import com.gemini.summarizer.domain.model.SummaryConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,8 +23,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,6 +38,7 @@ data class HomeUiState(
     val liveLogs: List<String> = emptyList(),
     val selectedFileName: String? = null,
     val selectedFileBase64: String? = null,
+    val selectedFileText: String? = null,
     val selectedFileMimeType: String? = null,
     val summaryResult: SummarizationFinalResult? = null,
     val targetLanguage: String = "Auto",
@@ -50,6 +54,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val securityManager = SecurityManager(application)
     private val settingsDataStore = SettingsDataStore(application)
     private val documentExporter = DocumentExporter(application)
+    private val documentExtractor = DocumentExtractor(application)
 
     private val rotationEngine = AutoRotationEngine(database, securityManager)
     private val hierarchicalSummarizer = HierarchicalSummarizer(rotationEngine)
@@ -67,54 +72,61 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             val defLang = settingsDataStore.defaultLanguageFlow.first()
             val defLength = settingsDataStore.defaultLengthFlow.first()
             val defType = settingsDataStore.defaultTypeFlow.first()
-            _uiState.value = _uiState.value.copy(
-                targetLanguage = defLang,
-                summaryLength = defLength,
-                summaryType = defType
-            )
+            _uiState.update {
+                it.copy(
+                    targetLanguage = defLang,
+                    summaryLength = defLength,
+                    summaryType = defType
+                )
+            }
         }
     }
 
     fun onInputTextChanged(text: String) {
-        _uiState.value = _uiState.value.copy(inputText = text, errorMessage = null)
+        _uiState.update { it.copy(inputText = text, errorMessage = null) }
     }
 
     fun onLanguageSelected(lang: String) {
-        _uiState.value = _uiState.value.copy(targetLanguage = lang)
+        _uiState.update { it.copy(targetLanguage = lang) }
     }
 
     fun onLengthSelected(length: String) {
-        _uiState.value = _uiState.value.copy(summaryLength = length)
+        _uiState.update { it.copy(summaryLength = length) }
     }
 
     fun onTypeSelected(type: String) {
-        _uiState.value = _uiState.value.copy(summaryType = type)
+        _uiState.update { it.copy(summaryType = type) }
     }
 
     fun onCustomPromptChanged(prompt: String) {
-        _uiState.value = _uiState.value.copy(customPrompt = prompt)
+        _uiState.update { it.copy(customPrompt = prompt) }
     }
 
     fun onClearInput() {
-        _uiState.value = _uiState.value.copy(
-            inputText = "",
-            summaryResult = null,
-            errorMessage = null
-        )
+        _uiState.update {
+            it.copy(
+                inputText = "",
+                summaryResult = null,
+                errorMessage = null
+            )
+        }
     }
 
     fun removeSelectedFile() {
-        _uiState.value = _uiState.value.copy(
-            selectedFileName = null,
-            selectedFileBase64 = null,
-            selectedFileMimeType = null,
-            errorMessage = null
-        )
+        _uiState.update {
+            it.copy(
+                selectedFileName = null,
+                selectedFileBase64 = null,
+                selectedFileText = null,
+                selectedFileMimeType = null,
+                errorMessage = null
+            )
+        }
     }
 
     fun processFileUri(uri: Uri) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, progressMessage = "Preparing document for Gemini...")
+            _uiState.update { it.copy(isLoading = true, progressMessage = "Preparing document for Gemini...") }
             withContext(Dispatchers.IO) {
                 try {
                     val contentResolver = getApplication<Application>().contentResolver
@@ -130,40 +142,119 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     val ext = fileName.substringAfterLast(".", "").lowercase()
-                    val mimeType = when (ext) {
-                        "pdf" -> "application/pdf"
-                        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        "txt", "csv", "md" -> "text/plain"
-                        else -> contentResolver.getType(uri) ?: "application/octet-stream"
-                    }
 
-                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    if (bytes == null || bytes.isEmpty()) {
-                        _uiState.value = _uiState.value.copy(
+                    when (ext) {
+                        "pdf" -> {
+                            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            if (bytes == null || bytes.isEmpty()) {
+                                _uiState.update {
+                                    it.copy(
+                                        isLoading = false,
+                                        progressMessage = "",
+                                        errorMessage = "Selected PDF file is empty."
+                                    )
+                                }
+                                return@withContext
+                            }
+
+                            if (bytes.size > 20 * 1024 * 1024) {
+                                _uiState.update {
+                                    it.copy(
+                                        isLoading = false,
+                                        progressMessage = "",
+                                        errorMessage = "PDF file exceeds the 20 MB inline limit. Please choose a smaller document."
+                                    )
+                                }
+                                return@withContext
+                            }
+
+                            val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                            _uiState.update {
+                                it.copy(
+                                    selectedFileName = fileName,
+                                    selectedFileBase64 = base64Data,
+                                    selectedFileText = null,
+                                    selectedFileMimeType = "application/pdf",
+                                    isLoading = false,
+                                    progressMessage = "",
+                                    errorMessage = null
+                                )
+                            }
+                        }
+                        "docx" -> {
+                            val extractResult = documentExtractor.extractFromUri(uri)
+                            extractResult.fold(
+                                onSuccess = { doc ->
+                                    if (doc.text.isBlank()) {
+                                        _uiState.update {
+                                            it.copy(
+                                                isLoading = false,
+                                                progressMessage = "",
+                                                errorMessage = "Could not extract readable text from DOCX file."
+                                            )
+                                        }
+                                    } else {
+                                        _uiState.update {
+                                            it.copy(
+                                                selectedFileName = fileName,
+                                                selectedFileBase64 = null,
+                                                selectedFileText = doc.text,
+                                                selectedFileMimeType = "text/plain",
+                                                isLoading = false,
+                                                progressMessage = "",
+                                                errorMessage = null
+                                            )
+                                        }
+                                    }
+                                },
+                                onFailure = { err ->
+                                    _uiState.update {
+                                        it.copy(
+                                            isLoading = false,
+                                            progressMessage = "",
+                                            errorMessage = "Failed to parse DOCX: ${err.message}"
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                        else -> {
+                            // Plain text formats: txt, md, markdown, csv, json, etc.
+                            val text = contentResolver.openInputStream(uri)?.use { stream ->
+                                stream.bufferedReader(Charsets.UTF_8).readText()
+                            } ?: ""
+
+                            if (text.isBlank()) {
+                                _uiState.update {
+                                    it.copy(
+                                        isLoading = false,
+                                        progressMessage = "",
+                                        errorMessage = "Selected text file is empty."
+                                    )
+                                }
+                            } else {
+                                _uiState.update {
+                                    it.copy(
+                                        selectedFileName = fileName,
+                                        selectedFileBase64 = null,
+                                        selectedFileText = text,
+                                        selectedFileMimeType = "text/plain",
+                                        isLoading = false,
+                                        progressMessage = "",
+                                        errorMessage = null
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    _uiState.update {
+                        it.copy(
                             isLoading = false,
                             progressMessage = "",
-                            errorMessage = "Selected file is empty."
+                            errorMessage = "Failed to load document: ${e.localizedMessage ?: "Unknown error"}"
                         )
-                        return@withContext
                     }
-
-                    val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
-
-                    // Keep inputText completely empty, file will be sent directly to Gemini
-                    _uiState.value = _uiState.value.copy(
-                        selectedFileName = fileName,
-                        selectedFileBase64 = base64Data,
-                        selectedFileMimeType = mimeType,
-                        isLoading = false,
-                        progressMessage = "",
-                        errorMessage = null
-                    )
-                } catch (e: Exception) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        progressMessage = "",
-                        errorMessage = "Failed to load document: ${e.localizedMessage ?: "Unknown error"}"
-                    )
                 }
             }
         }
@@ -173,32 +264,56 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         summarizationJob?.cancel()
         summarizationJob = null
         val cancelLog = formatLog("Process cancelled by user.")
-        _uiState.value = _uiState.value.copy(
-            isLoading = false,
-            progressMessage = "",
-            errorMessage = "Summarization cancelled by user.",
-            liveLogs = _uiState.value.liveLogs + cancelLog
-        )
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                progressMessage = "",
+                errorMessage = "Summarization cancelled by user.",
+                liveLogs = it.liveLogs + cancelLog
+            )
+        }
+    }
+
+    private fun isWebUrl(text: String): Boolean {
+        val trimmed = text.trim()
+        return (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) &&
+                !trimmed.contains(" ") && trimmed.contains(".")
+    }
+
+    private fun fetchWebPageContent(url: String): Pair<String, String> {
+        val doc = Jsoup.connect(url)
+            .userAgent("Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36")
+            .timeout(15000)
+            .followRedirects(true)
+            .get()
+
+        val title = doc.title().ifBlank { url }
+        doc.select("script, style, nav, footer, noscript, svg, form, iframe").remove()
+        val bodyText = doc.body().text()
+        return Pair(title, bodyText)
     }
 
     fun startSummarization() {
-        val hasFile = _uiState.value.selectedFileBase64 != null
+        val hasPdf = _uiState.value.selectedFileBase64 != null
+        val hasExtractedDoc = _uiState.value.selectedFileText != null
         val hasText = _uiState.value.inputText.isNotBlank()
 
-        if (!hasFile && !hasText) {
-            _uiState.value = _uiState.value.copy(errorMessage = "Please enter text or select a document.")
+        if (!hasPdf && !hasExtractedDoc && !hasText) {
+            _uiState.update { it.copy(errorMessage = "Please enter text, a web URL, or select a document.") }
             return
         }
 
         summarizationJob?.cancel()
         val startLog = formatLog("Starting summarization process...")
 
-        _uiState.value = _uiState.value.copy(
-            isLoading = true,
-            errorMessage = null,
-            progressMessage = "Initializing Gemini auto-rotation...",
-            liveLogs = listOf(startLog)
-        )
+        _uiState.update {
+            it.copy(
+                isLoading = true,
+                errorMessage = null,
+                progressMessage = "Initializing Gemini engine...",
+                liveLogs = listOf(startLog)
+            )
+        }
 
         val config = SummaryConfig(
             targetLanguage = _uiState.value.targetLanguage,
@@ -208,10 +323,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         summarizationJob = viewModelScope.launch {
-            val result = if (hasFile) {
+            val result = if (hasPdf) {
+                // PDF native inlineData
                 hierarchicalSummarizer.summarizeFile(
                     fileData = GeminiFileData(
-                        mimeType = _uiState.value.selectedFileMimeType ?: "application/pdf",
+                        mimeType = "application/pdf",
                         base64Data = _uiState.value.selectedFileBase64!!
                     ),
                     fileName = _uiState.value.selectedFileName ?: "Document",
@@ -219,22 +335,82 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     config = config,
                     onProgressUpdate = { progress ->
                         val logEntry = formatLog(progress)
-                        _uiState.value = _uiState.value.copy(
-                            progressMessage = progress,
-                            liveLogs = _uiState.value.liveLogs + logEntry
-                        )
+                        _uiState.update {
+                            it.copy(
+                                progressMessage = progress,
+                                liveLogs = it.liveLogs + logEntry
+                            )
+                        }
                     }
                 )
-            } else {
+            } else if (hasExtractedDoc) {
+                // DOCX or attached TXT file
+                val docText = _uiState.value.selectedFileText!!
+                val notes = _uiState.value.inputText.ifBlank { null }
+                val contentWithNotes = if (notes != null) "User Instructions: $notes\n\nDocument Content:\n$docText" else docText
+
                 hierarchicalSummarizer.summarizeText(
-                    inputText = _uiState.value.inputText.trim(),
+                    inputText = contentWithNotes,
                     config = config,
                     onProgressUpdate = { progress ->
                         val logEntry = formatLog(progress)
-                        _uiState.value = _uiState.value.copy(
-                            progressMessage = progress,
-                            liveLogs = _uiState.value.liveLogs + logEntry
+                        _uiState.update {
+                            it.copy(
+                                progressMessage = progress,
+                                liveLogs = it.liveLogs + logEntry
+                            )
+                        }
+                    }
+                )
+            } else {
+                // Direct input text or live Web URL
+                val rawInput = _uiState.value.inputText.trim()
+                val textToSummarize = if (isWebUrl(rawInput)) {
+                    val fetchLog = formatLog("Fetching live webpage: $rawInput...")
+                    _uiState.update {
+                        it.copy(
+                            progressMessage = "Fetching webpage content...",
+                            liveLogs = it.liveLogs + fetchLog
                         )
+                    }
+
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val (webTitle, webBody) = fetchWebPageContent(rawInput)
+                            if (webBody.isBlank()) {
+                                throw IllegalStateException("Webpage returned empty text.")
+                            }
+                            val successLog = formatLog("Retrieved article '$webTitle' (${webBody.length} characters).")
+                            _uiState.update { it.copy(liveLogs = it.liveLogs + successLog) }
+                            "Web Page Title: $webTitle\nURL: $rawInput\n\nArticle Content:\n$webBody"
+                        }
+                    } catch (e: Exception) {
+                        val failLog = formatLog("Failed to fetch URL ($rawInput): ${e.localizedMessage}")
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                progressMessage = "",
+                                errorMessage = "Could not fetch webpage: ${e.localizedMessage ?: "Unknown error"}",
+                                liveLogs = it.liveLogs + failLog
+                            )
+                        }
+                        return@launch
+                    }
+                } else {
+                    rawInput
+                }
+
+                hierarchicalSummarizer.summarizeText(
+                    inputText = textToSummarize,
+                    config = config,
+                    onProgressUpdate = { progress ->
+                        val logEntry = formatLog(progress)
+                        _uiState.update {
+                            it.copy(
+                                progressMessage = progress,
+                                liveLogs = it.liveLogs + logEntry
+                            )
+                        }
                     }
                 )
             }
@@ -242,18 +418,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             result.fold(
                 onSuccess = { summaryResult ->
                     val successLog = formatLog("Summary generated successfully!")
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        progressMessage = "",
-                        summaryResult = summaryResult,
-                        liveLogs = _uiState.value.liveLogs + successLog
-                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            progressMessage = "",
+                            summaryResult = summaryResult,
+                            liveLogs = it.liveLogs + successLog
+                        )
+                    }
 
                     // Save to history if enabled
                     if (settingsDataStore.saveHistoryFlow.first()) {
                         val saveOrig = settingsDataStore.saveOriginalTextFlow.first()
-                        val title = _uiState.value.selectedFileName ?: "Text Summary"
-                        val originalTextToSave = if (hasFile) {
+                        val title = _uiState.value.selectedFileName ?: if (isWebUrl(_uiState.value.inputText)) "Web Summary" else "Text Summary"
+                        val originalTextToSave = if (hasPdf || hasExtractedDoc) {
                             "[Document: ${_uiState.value.selectedFileName}]"
                         } else if (saveOrig) {
                             _uiState.value.inputText
@@ -280,12 +458,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onFailure = { error ->
                     val failLog = formatLog("Error: ${error.message ?: "Unknown error"}")
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        progressMessage = "",
-                        errorMessage = error.message ?: "Summarization failed.",
-                        liveLogs = _uiState.value.liveLogs + failLog
-                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            progressMessage = "",
+                            errorMessage = error.message ?: "Summarization failed.",
+                            liveLogs = it.liveLogs + failLog
+                        )
+                    }
                 }
             )
         }

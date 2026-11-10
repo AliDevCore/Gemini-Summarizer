@@ -5,6 +5,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStreamWriter
@@ -94,52 +97,78 @@ class DocumentExporter(private val context: Context) {
         account: String
     ) {
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 dimensions
-        val page = pdfDocument.startPage(pageInfo)
-        val canvas = page.canvas
+        val pageWidth = 595
+        val pageHeight = 842
+        val marginX = 40f
+        val marginY = 50f
+        val contentWidth = (pageWidth - 2 * marginX).toInt()
+        val maxY = pageHeight - marginY
+
+        var pageIndex = 1
+        var pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex).create()
+        var page = pdfDocument.startPage(pageInfo)
+        var canvas = page.canvas
 
         val paintTitle = Paint().apply {
             color = Color.BLACK
-            textSize = 16f
+            textSize = 15f
             isFakeBoldText = true
+            isAntiAlias = true
         }
 
         val paintSub = Paint().apply {
             color = Color.DKGRAY
-            textSize = 10f
+            textSize = 9f
+            isAntiAlias = true
         }
 
-        val paintBody = Paint().apply {
+        val bodyPaint = TextPaint().apply {
             color = Color.BLACK
-            textSize = 11f
+            textSize = 10.5f
+            isAntiAlias = true
         }
 
-        var y = 50f
-        canvas.drawText(title, 40f, y, paintTitle)
-        y += 20f
-        canvas.drawText("Generated on $date | Model: $model | Account: $account", 40f, y, paintSub)
-        y += 10f
-        canvas.drawLine(40f, y, 555f, y, paintSub)
-        y += 25f
+        var currentY = marginY
 
-        val lines = content.split("\n")
-        for (rawLine in lines) {
-            // Basic line wrapping
-            var start = 0
-            val lineLen = rawLine.length
-            if (lineLen == 0) {
-                y += 15f
-                continue
+        // Header on First Page
+        canvas.drawText(title, marginX, currentY, paintTitle)
+        currentY += 18f
+        canvas.drawText("Generated on $date | Model: $model | Account: $account", marginX, currentY, paintSub)
+        currentY += 8f
+        canvas.drawLine(marginX, currentY, pageWidth - marginX, currentY, paintSub)
+        currentY += 20f
+
+        val paragraphs = content.split("\n")
+        val isOverallRtl = content.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+
+        for (paragraph in paragraphs) {
+            val textToDraw = paragraph.ifEmpty { " " }
+            val isParagraphRtl = textToDraw.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+
+            val alignment = if (isParagraphRtl) Layout.Alignment.ALIGN_OPPOSITE else Layout.Alignment.ALIGN_NORMAL
+
+            val layout = StaticLayout.Builder.obtain(textToDraw, 0, textToDraw.length, bodyPaint, contentWidth)
+                .setAlignment(alignment)
+                .setLineSpacing(2f, 1.15f)
+                .setIncludePad(true)
+                .build()
+
+            // Check if we need to start a new page
+            if (currentY + layout.height > maxY) {
+                pdfDocument.finishPage(page)
+                pageIndex++
+                pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex).create()
+                page = pdfDocument.startPage(pageInfo)
+                canvas = page.canvas
+                currentY = marginY
             }
-            while (start < lineLen) {
-                val end = (start + 75).coerceAtMost(lineLen)
-                val chunk = rawLine.substring(start, end)
-                canvas.drawText(chunk, 40f, y, paintBody)
-                y += 18f
-                start = end
-                if (y > 800f) break
-            }
-            if (y > 800f) break
+
+            canvas.save()
+            canvas.translate(marginX, currentY)
+            layout.draw(canvas)
+            canvas.restore()
+
+            currentY += layout.height + 6f
         }
 
         pdfDocument.finishPage(page)
@@ -157,20 +186,63 @@ class DocumentExporter(private val context: Context) {
         model: String,
         account: String
     ) {
-        // Build minimal valid DOCX OpenXML archive
+        val isOverallRtl = content.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
+        val bidiTag = if (isOverallRtl) "<w:bidi/>" else ""
+        val rtlTag = if (isOverallRtl) "<w:rtl/>" else ""
+        val alignTag = if (isOverallRtl) "<w:jc w:val=\"right\"/>" else "<w:jc w:val=\"left\"/>"
+
+        val bodyXml = StringBuilder()
+
+        // Document Title
+        bodyXml.append("""
+            <w:p>
+              <w:pPr>$bidiTag$alignTag</w:pPr>
+              <w:r><w:rPr><w:b/><w:sz w:val="32"/>$rtlTag</w:rPr><w:t xml:space="preserve">${escapeXml(title)}</w:t></w:r>
+            </w:p>
+            <w:p>
+              <w:pPr>$bidiTag$alignTag</w:pPr>
+              <w:r><w:rPr><w:i/><w:sz w:val="18"/><w:color w:val="666666"/>$rtlTag</w:rPr><w:t xml:space="preserve">Date: ${escapeXml(date)} | Model: ${escapeXml(model)} | Account: ${escapeXml(account)}</w:t></w:r>
+            </w:p>
+            <w:p><w:pPr>$bidiTag$alignTag</w:pPr></w:p>
+        """.trimIndent())
+
+        for (line in content.split("\n")) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                bodyXml.append("<w:p><w:pPr>$bidiTag$alignTag</w:pPr></w:p>")
+                continue
+            }
+
+            val isHeader = trimmed.startsWith("#")
+            val isBullet = trimmed.startsWith("* ") || trimmed.startsWith("- ") || trimmed.startsWith("• ")
+
+            val cleanText = when {
+                isHeader -> trimmed.removePrefix("#").removePrefix("#").removePrefix("#").trim()
+                isBullet -> "• " + trimmed.substring(2).trim()
+                else -> trimmed
+            }
+
+            val cleanFormatted = cleanText.replace("**", "")
+
+            val headingStyle = if (isHeader) "<w:b/><w:sz w:val=\"26\"/>" else "<w:sz w:val=\"22\"/>"
+            val bulletIndent = if (isBullet) "<w:ind w:left=\"360\"/>" else ""
+
+            bodyXml.append("""
+                <w:p>
+                  <w:pPr>$bidiTag$alignTag$bulletIndent</w:pPr>
+                  <w:r>
+                    <w:rPr>$headingStyle$rtlTag</w:rPr>
+                    <w:t xml:space="preserve">${escapeXml(cleanFormatted)}</w:t>
+                  </w:r>
+                </w:p>
+            """.trimIndent())
+        }
+
         val documentXml = """
             <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
             <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
               <w:body>
-                <w:p>
-                  <w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>${escapeXml(title)}</w:t></w:r>
-                </w:p>
-                <w:p>
-                  <w:r><w:rPr><w:i/><w:sz w:val="18"/><w:color w:val="555555"/></w:rPr><w:t>Date: ${escapeXml(date)} | Model: ${escapeXml(model)} | Account: ${escapeXml(account)}</w:t></w:r>
-                </w:p>
-                ${content.split("\n").joinToString("") { line ->
-                    "<w:p><w:r><w:t>${escapeXml(line)}</w:t></w:r></w:p>"
-                }}
+                $bodyXml
               </w:body>
             </w:document>
         """.trimIndent()

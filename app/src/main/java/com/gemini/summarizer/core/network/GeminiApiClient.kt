@@ -1,15 +1,22 @@
 package com.gemini.summarizer.core.network
 
+import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
 
 sealed class GeminiApiResult<out T> {
     data class Success<out T>(val data: T) : GeminiApiResult<T>()
@@ -91,7 +98,7 @@ class GeminiApiClient {
 
         val configObj = JsonObject()
         configObj.addProperty("temperature", 0.3)
-        configObj.addProperty("maxOutputTokens", 8192)
+        configObj.addProperty("maxOutputTokens", 32768)
         rootJson.add("generationConfig", configObj)
 
         val requestBody = rootJson.toString().toRequestBody(jsonMediaType)
@@ -103,7 +110,7 @@ class GeminiApiClient {
             .build()
 
         try {
-            client.newCall(request).execute().use { response ->
+            executeCancellable(request).use { response ->
                 val responseBody = response.body?.string() ?: ""
                 val code = response.code
 
@@ -113,11 +120,25 @@ class GeminiApiClient {
                         val candidates = parsed.getAsJsonArray("candidates")
                         if (candidates != null && candidates.size() > 0) {
                             val firstCandidate = candidates[0].asJsonObject
+                            val finishReason = firstCandidate.get("finishReason")?.asString
                             val content = firstCandidate.getAsJsonObject("content")
                             val parts = content?.getAsJsonArray("parts")
                             if (parts != null && parts.size() > 0) {
-                                val text = parts[0].asJsonObject.get("text")?.asString ?: ""
-                                return@withContext GeminiApiResult.Success(text)
+                                val fullText = StringBuilder()
+                                for (p in parts) {
+                                    val partObj = p.asJsonObject
+                                    val isThought = partObj.get("thought")?.asBoolean ?: false
+                                    if (!isThought && partObj.has("text")) {
+                                        fullText.append(partObj.get("text").asString)
+                                    }
+                                }
+                                val textResult = fullText.toString().trim()
+                                if (textResult.isNotEmpty()) {
+                                    return@withContext GeminiApiResult.Success(textResult)
+                                }
+                            }
+                            if (finishReason == "SAFETY") {
+                                return@withContext GeminiApiResult.RequestError("Content blocked by Google Safety Filters.")
                             }
                         }
                         return@withContext GeminiApiResult.RequestError("Empty response returned from model")
@@ -131,9 +152,23 @@ class GeminiApiClient {
                         val errorMessage = parseErrorMessage(responseBody) ?: "Rate limit or quota exceeded"
                         return@withContext GeminiApiResult.RateLimited(errorMessage, retryAfterHeader)
                     }
-                    401, 403 -> {
-                        val errorMessage = parseErrorMessage(responseBody) ?: "API Key is invalid or unauthorized"
+                    401 -> {
+                        val errorMessage = parseErrorMessage(responseBody) ?: "API Key is invalid or expired (HTTP 401)"
                         return@withContext GeminiApiResult.InvalidKey(errorMessage)
+                    }
+                    403 -> {
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Forbidden access (HTTP 403)"
+                        if (errorMessage.contains("API_KEY_INVALID", ignoreCase = true) ||
+                            errorMessage.contains("key not valid", ignoreCase = true) ||
+                            errorMessage.contains("API key not found", ignoreCase = true)
+                        ) {
+                            return@withContext GeminiApiResult.InvalidKey(errorMessage)
+                        }
+                        if (errorMessage.contains("User location is not supported", ignoreCase = true) ||
+                            errorMessage.contains("location is not supported", ignoreCase = true)) {
+                            return@withContext GeminiApiResult.RequestError("Google Gemini is not supported in your current IP/region. Please connect to a VPN/proxy.")
+                        }
+                        return@withContext GeminiApiResult.RequestError("Model access restricted or billing required ($errorMessage)")
                     }
                     500, 502, 503, 504 -> {
                         val errorMessage = parseErrorMessage(responseBody) ?: "Google service temporary error (HTTP $code)"
@@ -141,6 +176,10 @@ class GeminiApiClient {
                     }
                     else -> {
                         val errorMessage = parseErrorMessage(responseBody) ?: "Request error (HTTP $code)"
+                        if (errorMessage.contains("User location is not supported", ignoreCase = true) ||
+                            errorMessage.contains("location is not supported", ignoreCase = true)) {
+                            return@withContext GeminiApiResult.RequestError("Google Gemini is not supported in your current IP/region. Please connect to a VPN/proxy.")
+                        }
                         if (errorMessage.contains("no longer available", ignoreCase = true) ||
                             errorMessage.contains("not found", ignoreCase = true) ||
                             errorMessage.contains("update your code to use", ignoreCase = true)
@@ -151,12 +190,33 @@ class GeminiApiClient {
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             return@withContext GeminiApiResult.TransientError("Network error: ${e.localizedMessage ?: "Connection failed"}")
         } catch (e: Exception) {
             return@withContext GeminiApiResult.RequestError("Unexpected error: ${e.localizedMessage ?: "Unknown"}")
         }
     }
+
+    private suspend fun executeCancellable(request: Request): Response =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation {
+                call.cancel()
+            }
+            call.enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resume(response) {
+                        response.close()
+                    }
+                }
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isCancelled) return
+                    continuation.resumeWithException(e)
+                }
+            })
+        }
 
     suspend fun listModels(apiKey: String): GeminiApiResult<List<DiscoveredModel>> = withContext(Dispatchers.IO) {
         val url = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -167,7 +227,7 @@ class GeminiApiClient {
             .build()
 
         try {
-            client.newCall(request).execute().use { response ->
+            executeCancellable(request).use { response ->
                 val body = response.body?.string() ?: ""
                 if (response.code == 200) {
                     val root = gson.fromJson(body, JsonObject::class.java)
@@ -194,29 +254,9 @@ class GeminiApiClient {
                             }
                         }
 
-                        // Strictly require Gemini Flash or Gemini Pro text models
-                        val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
-                                (cleanId.contains("flash") || cleanId.contains("pro"))
+                        val isAllowed = ModelFilter.isAllowedTextModel(cleanId, displayName)
 
-                        val isExcluded = cleanId.contains("robotics") ||
-                                cleanId.contains("omni") ||
-                                cleanId.contains("nano") ||
-                                cleanId.contains("banana") ||
-                                cleanId.contains("antigravity") ||
-                                cleanId.contains("deep-research") ||
-                                cleanId.contains("gemma") ||
-                                cleanId.contains("embedding") ||
-                                cleanId.contains("aqa") ||
-                                cleanId.contains("imagen") ||
-                                cleanId.contains("learnlm") ||
-                                cleanId.contains("tts") ||
-                                cleanId.contains("whisper") ||
-                                cleanId.contains("2.5") ||
-                                cleanId.contains("1.0") ||
-                                cleanId.endsWith("-001") ||
-                                cleanId.endsWith("-002")
-
-                        if (supportsText && isGeminiFlashOrPro && !isExcluded) {
+                        if (supportsText && isAllowed) {
                             result.add(
                                 DiscoveredModel(
                                     id = cleanId,

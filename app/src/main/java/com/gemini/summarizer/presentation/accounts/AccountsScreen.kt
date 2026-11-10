@@ -119,11 +119,22 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { viewModel.testApiKey(item) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Sync,
+                                        contentDescription = "Test Key",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                                 Switch(
                                     checked = item.isActive,
                                     onCheckedChange = { viewModel.toggleKeyActive(item) }
                                 )
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(4.dp))
                                 IconButton(onClick = { viewModel.deleteKey(item) }) {
                                     Icon(
                                         Icons.Default.DeleteOutline,
