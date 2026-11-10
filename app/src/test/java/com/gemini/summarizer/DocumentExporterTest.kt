@@ -19,3 +19,4 @@ class DocumentExporterTest {
         assertTrue("Document XML must contain body content", documentXml.contains(testBodyXml))
     }
 }
+

@@ -297,7 +297,7 @@ class DocumentExporter(private val context: Context) {
                 "</w:document>"
         }
 
-        private fun buildRunsXml(text: String, isHeader: Boolean, rtlTag: String): String {
+        internal fun buildRunsXml(text: String, isHeader: Boolean, rtlTag: String): String {
             val runsBuilder = StringBuilder()
             val boldRegex = Regex("""\*\*(.*?)\*\*""")
             var lastIndex = 0
