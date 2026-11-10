@@ -33,8 +33,8 @@ interface ModelDao {
     @Query("UPDATE gemini_models SET isEnabled = 0")
     suspend fun disableAllModels()
 
-    @Query("DELETE FROM gemini_models WHERE id NOT LIKE 'gemini-%' OR (id NOT LIKE '%flash%' AND id NOT LIKE '%pro%') OR id LIKE '%robotics%' OR id LIKE '%omni%' OR id LIKE '%nano%' OR id LIKE '%banana%' OR id LIKE '%antigravity%' OR id LIKE '%deep-research%' OR id LIKE '%gemma%' OR id LIKE '%embedding%' OR id LIKE '%aqa%' OR id LIKE '%imagen%' OR id LIKE '%learnlm%' OR id LIKE '%tts%' OR id LIKE '%whisper%' OR id LIKE '%2.5%' OR id LIKE '%1.0%' OR id LIKE '%-001' OR id LIKE '%-002'")
-    suspend fun deleteDeprecatedModels()
+    @Query("DELETE FROM gemini_models WHERE id = :modelId")
+    suspend fun deleteModelById(modelId: String)
 
     @Query("UPDATE gemini_models SET priority = :priority WHERE id = :modelId")
     suspend fun setModelPriority(modelId: String, priority: Int)

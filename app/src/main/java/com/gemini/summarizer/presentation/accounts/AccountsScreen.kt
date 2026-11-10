@@ -19,6 +19,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var inputKey by remember { mutableStateOf("") }
     var inputLabel by remember { mutableStateOf("") }
+    var inputProjectId by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -172,14 +173,22 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        OutlinedTextField(
+                            value = inputProjectId,
+                            onValueChange = { inputProjectId = it },
+                            label = { Text("Project ID (Optional, e.g. my-cloud-project)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 },
                 confirmButton = {
                     Button(
                         onClick = {
-                            viewModel.addDirectApiKey(inputKey, inputLabel)
+                            viewModel.addDirectApiKey(inputKey, inputLabel, inputProjectId)
                             inputKey = ""
                             inputLabel = ""
+                            inputProjectId = ""
                         },
                         enabled = inputKey.isNotBlank()
                     ) {
@@ -188,6 +197,28 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                 },
                 dismissButton = {
                     TextButton(onClick = { viewModel.dismissAddKeyDialog() }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Delete Confirmation Dialog
+        uiState.keyPendingDelete?.let { pendingItem ->
+            AlertDialog(
+                onDismissRequest = { viewModel.cancelDeleteKey() },
+                title = { Text("Delete API Key") },
+                text = { Text("Are you sure you want to delete '${pendingItem.label}' (${pendingItem.maskedKey})? This action cannot be undone.") },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.confirmDeleteKey() },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.cancelDeleteKey() }) {
                         Text("Cancel")
                     }
                 }

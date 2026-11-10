@@ -10,31 +10,42 @@ class SecurityManager private constructor(context: Context) {
 
     private val sharedPreferences: SharedPreferences? by lazy {
         try {
-            val masterKey = MasterKey.Builder(context.applicationContext)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-
-            EncryptedSharedPreferences.create(
-                context.applicationContext,
-                "gemini_summarizer_secure_prefs",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            createEncryptedPrefs(context.applicationContext)
         } catch (e: Exception) {
-            Log.e("SecurityManager", "Failed to initialize EncryptedSharedPreferences, falling back to private prefs", e)
+            Log.e("SecurityManager", "Failed to initialize EncryptedSharedPreferences. Attempting recovery.", e)
             try {
-                context.applicationContext.getSharedPreferences("gemini_summarizer_secure_prefs_fallback", Context.MODE_PRIVATE)
-            } catch (ex: Exception) {
+                // Recreate after clearing corrupted file
+                val prefsFile = java.io.File(context.applicationContext.filesDir.parent, "shared_prefs/gemini_summarizer_secure_prefs.xml")
+                if (prefsFile.exists()) {
+                    prefsFile.delete()
+                }
+                createEncryptedPrefs(context.applicationContext)
+            } catch (recoveryEx: Exception) {
+                Log.e("SecurityManager", "Keystore recovery failed. Plaintext fallback is strictly prohibited.", recoveryEx)
                 null
             }
         }
     }
 
+    private fun createEncryptedPrefs(appContext: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(appContext)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        return EncryptedSharedPreferences.create(
+            appContext,
+            "gemini_summarizer_secure_prefs",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
     fun storeApiKey(keyId: String, apiKey: String) {
-        sharedPreferences?.edit()
-            ?.putString("api_key_$keyId", apiKey.trim())
-            ?.apply()
+        val prefs = sharedPreferences ?: throw IllegalStateException("Secure encrypted storage is unavailable. Keys cannot be stored in plaintext.")
+        prefs.edit()
+            .putString("api_key_$keyId", apiKey.trim())
+            .apply()
     }
 
     fun getApiKey(keyId: String): String? {

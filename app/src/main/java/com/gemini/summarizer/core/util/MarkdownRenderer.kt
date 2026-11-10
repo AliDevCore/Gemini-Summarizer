@@ -56,8 +56,8 @@ object MarkdownRenderer {
     }
 
     private fun AnnotatedString.Builder.parseInlineTokens(text: String) {
-        // Match bold **text**, inline code `text`, and italic *text* or _text_
-        val tokenRegex = Regex("""(\*\*.*?\*\*|`.*?`|\*.*?\*|_.*?_)""")
+        // Match bold **text**, inline code `text`, italic *text*, or word-bounded _text_ (preserving snake_case)
+        val tokenRegex = Regex("""(\*\*.*?\*\*|`.*?`|\*.*?\*|(?<=\s|^|[(\[{\-])_(?!\s)(.*?)(?<!\s)_(?=\s|$|[.,!?;:\)\]}\-]))""")
         var lastIndex = 0
         val matches = tokenRegex.findAll(text)
 

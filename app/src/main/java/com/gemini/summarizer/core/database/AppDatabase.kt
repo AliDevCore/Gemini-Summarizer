@@ -33,6 +33,12 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Table definitions are preserved
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -40,7 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "gemini_summarizer_database"
                 )
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_1_2)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
@@ -52,8 +58,13 @@ abstract class AppDatabase : RoomDatabase() {
                         super.onOpen(db)
                         CoroutineScope(Dispatchers.IO).launch {
                             val dao = getInstance(context).modelDao()
-                            // Clean up any deprecated/unsupported models from database
-                            dao.deleteDeprecatedModels()
+                            // Clean up any models that do not meet ModelFilter rules
+                            val all = dao.getAllModelsList()
+                            for (model in all) {
+                                if (!ModelFilter.isAllowedTextModel(model.id, model.displayName)) {
+                                    dao.deleteModelById(model.id)
+                                }
+                            }
                             // Ensure modern models are always present
                             for (model in getDefaultModels()) {
                                 dao.insertModelIfNotExist(model)

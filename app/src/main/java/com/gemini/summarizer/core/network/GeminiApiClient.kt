@@ -43,9 +43,10 @@ data class DiscoveredModel(
 class GeminiApiClient {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(25, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(180, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
@@ -96,7 +97,6 @@ class GeminiApiClient {
         }
 
         val configObj = JsonObject()
-        configObj.addProperty("temperature", 0.3)
         configObj.addProperty("maxOutputTokens", 32768)
         rootJson.add("generationConfig", configObj)
 
@@ -133,6 +133,11 @@ class GeminiApiClient {
                                 }
                                 val textResult = fullText.toString().trim()
                                 if (textResult.isNotEmpty()) {
+                                    if (finishReason == "MAX_TOKENS") {
+                                        return@withContext GeminiApiResult.Success(
+                                            "$textResult\n\n[Notice: Generation reached maximum token limit (MAX_TOKENS) and may be truncated.]"
+                                        )
+                                    }
                                     return@withContext GeminiApiResult.Success(textResult)
                                 }
                             }
@@ -148,8 +153,10 @@ class GeminiApiClient {
                     }
                     429 -> {
                         val retryAfterHeader = response.header("Retry-After")?.toLongOrNull()
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Rate limit or quota exceeded"
-                        return@withContext GeminiApiResult.RateLimited(errorMessage, retryAfterHeader)
+                        val retryDelayFromBody = parseRetryDelay(responseBody)
+                        val effectiveCooldown = retryAfterHeader ?: retryDelayFromBody
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Rate limit or quota exceeded (HTTP 429)"
+                        return@withContext GeminiApiResult.RateLimited(errorMessage, effectiveCooldown)
                     }
                     401, 403 -> {
                         val errorMessage = parseErrorMessage(responseBody) ?: "API Key is invalid or unauthorized"
@@ -293,6 +300,25 @@ class GeminiApiClient {
             val root = gson.fromJson(jsonBody, JsonObject::class.java)
             val errorObj = root.getAsJsonObject("error")
             errorObj?.get("message")?.asString
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun parseRetryDelay(jsonBody: String): Long? {
+        return try {
+            val root = gson.fromJson(jsonBody, JsonObject::class.java)
+            val error = root.getAsJsonObject("error") ?: return null
+            val details = error.getAsJsonArray("details") ?: return null
+            for (detail in details) {
+                val obj = detail.asJsonObject
+                if (obj.has("retryDelay")) {
+                    val raw = obj.get("retryDelay").asString
+                    val clean = raw.removeSuffix("s").trim()
+                    return clean.toDoubleOrNull()?.toLong()
+                }
+            }
+            null
         } catch (_: Exception) {
             null
         }

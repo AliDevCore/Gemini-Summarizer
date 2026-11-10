@@ -31,6 +31,7 @@ data class AccountsUiState(
     val keysList: List<ApiKeyDisplayItem> = emptyList(),
     val isLoading: Boolean = false,
     val showAddKeyDialog: Boolean = false,
+    val keyPendingDelete: ApiKeyDisplayItem? = null,
     val errorMessage: String? = null
 )
 
@@ -44,10 +45,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<AccountsUiState> = _uiState.asStateFlow()
 
     init {
-        loadKeys()
-    }
-
-    private fun loadKeys() {
+        // Single persistent observer flow for all accounts and keys
         viewModelScope.launch {
             database.accountDao().getAllAccountsFlow().collectLatest { accounts ->
                 val displayList = mutableListOf<ApiKeyDisplayItem>()
@@ -79,14 +77,29 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun dismissAddKeyDialog() {
-        _uiState.update { it.copy(showAddKeyDialog = false) }
+        _uiState.update { it.copy(showAddKeyDialog = false, errorMessage = null) }
     }
 
-    fun addDirectApiKey(rawKey: String, customLabel: String?) {
+    fun addDirectApiKey(rawKey: String, customLabel: String?, customProjectId: String? = null) {
         val cleanKey = rawKey.trim()
         if (cleanKey.isBlank()) return
 
         viewModelScope.launch {
+            // Check for duplicate API key
+            val allAccounts = database.accountDao().getAllAccountsList()
+            for (acc in allAccounts) {
+                val existingKeys = database.apiKeyDao().getKeysForAccount(acc.id)
+                for (k in existingKeys) {
+                    val stored = securityManager.getApiKey(k.keyIdentifier)
+                    if (stored != null && stored.trim() == cleanKey) {
+                        _uiState.update {
+                            it.copy(errorMessage = "This API key has already been added as '${acc.name}'.")
+                        }
+                        return@launch
+                    }
+                }
+            }
+
             val keyNumber = _uiState.value.keysList.size + 1
             val label = if (customLabel.isNullOrBlank()) "Key #$keyNumber" else customLabel.trim()
 
@@ -99,6 +112,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 )
             )
 
+            val assignedProjectId = if (!customProjectId.isNullOrBlank()) customProjectId.trim() else "project-$accountId"
             val keyIdentifier = UUID.randomUUID().toString()
             securityManager.storeApiKey(keyIdentifier, cleanKey)
 
@@ -106,14 +120,13 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 ApiKeyEntity(
                     accountId = accountId,
                     keyIdentifier = keyIdentifier,
-                    projectId = "project-$accountId",
+                    projectId = assignedProjectId,
                     isActive = true,
                     statusMessage = "Ready"
                 )
             )
 
-            _uiState.update { it.copy(showAddKeyDialog = false) }
-            loadKeys()
+            _uiState.update { it.copy(showAddKeyDialog = false, errorMessage = null) }
         }
     }
 
@@ -123,12 +136,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             val raw = securityManager.getApiKey(key.keyIdentifier)
             if (raw.isNullOrBlank()) {
                 database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Key missing in secure storage")
-                loadKeys()
                 return@launch
             }
 
             database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Testing connection...")
-            loadKeys()
 
             when (val res = apiClient.listModels(raw)) {
                 is GeminiApiResult.Success -> {
@@ -144,7 +155,6 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                     database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Connection checked")
                 }
             }
-            loadKeys()
         }
     }
 
@@ -153,12 +163,22 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             val key = database.apiKeyDao().getKeysForAccount(item.accountId).find { it.id == item.id }
             if (key != null) {
                 database.apiKeyDao().updateApiKey(key.copy(isActive = !key.isActive))
-                loadKeys()
             }
         }
     }
 
-    fun deleteKey(item: ApiKeyDisplayItem) {
+    fun requestDeleteKey(item: ApiKeyDisplayItem) {
+        _uiState.update { it.copy(keyPendingDelete = item) }
+    }
+
+    fun cancelDeleteKey() {
+        _uiState.update { it.copy(keyPendingDelete = null) }
+    }
+
+    fun confirmDeleteKey() {
+        val item = _uiState.value.keyPendingDelete ?: return
+        _uiState.update { it.copy(keyPendingDelete = null) }
+
         viewModelScope.launch {
             val account = database.accountDao().getAccountById(item.accountId)
             if (account != null) {
@@ -168,8 +188,11 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                     database.apiKeyDao().deleteApiKey(k)
                 }
                 database.accountDao().deleteAccount(account)
-                loadKeys()
             }
         }
+    }
+
+    fun deleteKey(item: ApiKeyDisplayItem) {
+        requestDeleteKey(item)
     }
 }

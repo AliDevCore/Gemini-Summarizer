@@ -29,4 +29,19 @@ class MarkdownRendererTest {
         val parsed = MarkdownRenderer.parse(input)
         assertEquals("This is bold and this is italic and code", parsed.text)
     }
+
+    @Test
+    fun testSnakeCaseNotMangledByItalicRegex() {
+        val input = "The variables user_account_id and max_token_limit must not be altered."
+        val parsed = MarkdownRenderer.parse(input)
+        assertEquals("The variables user_account_id and max_token_limit must not be altered.", parsed.text)
+    }
+
+    @Test
+    fun testWordBoundedUnderscoreItalic() {
+        val input = "Here is _emphasized text_ in prose."
+        val parsed = MarkdownRenderer.parse(input)
+        assertEquals("Here is emphasized text in prose.", parsed.text)
+    }
 }
+

@@ -9,7 +9,7 @@ interface HistoryDao {
     @Query("SELECT * FROM summary_history ORDER BY timestamp DESC")
     fun getAllHistoryFlow(): Flow<List<HistoryEntity>>
 
-    @Query("SELECT * FROM summary_history WHERE title LIKE '%' || :query || '%' OR summaryText LIKE '%' || :query || '%' ORDER BY timestamp DESC")
+    @Query("SELECT * FROM summary_history WHERE title LIKE '%' || :query || '%' ESCAPE '\\' OR summaryText LIKE '%' || :query || '%' ESCAPE '\\' ORDER BY timestamp DESC")
     fun searchHistory(query: String): Flow<List<HistoryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

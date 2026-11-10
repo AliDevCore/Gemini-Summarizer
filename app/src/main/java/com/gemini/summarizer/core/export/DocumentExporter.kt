@@ -138,7 +138,34 @@ class DocumentExporter(private val context: Context) {
         canvas.drawLine(marginX, currentY, pageWidth - marginX, currentY, paintSub)
         currentY += 20f
 
-        val paragraphs = content.split("\n")
+        val rawParagraphs = content.split("\n")
+        val paragraphs = mutableListOf<String>()
+        for (raw in rawParagraphs) {
+            val cleaned = raw
+                .replace(Regex("""\*\*(.*?)\*\*"""), "$1")
+                .replace(Regex("""^#{1,6}\s*"""), "")
+                .replace(Regex("""`(.*?)`"""), "$1")
+            if (cleaned.length > 1500) {
+                // Split oversized paragraphs that might exceed an entire page height
+                var remaining = cleaned
+                while (remaining.isNotEmpty()) {
+                    if (remaining.length <= 1500) {
+                        paragraphs.add(remaining)
+                        break
+                    }
+                    var splitPoint = remaining.lastIndexOf(". ", 1500)
+                    if (splitPoint == -1 || splitPoint < 750) {
+                        splitPoint = remaining.lastIndexOf(" ", 1500)
+                    }
+                    if (splitPoint == -1) splitPoint = 1500
+                    paragraphs.add(remaining.substring(0, splitPoint).trim())
+                    remaining = remaining.substring(splitPoint).trim()
+                }
+            } else {
+                paragraphs.add(cleaned)
+            }
+        }
+
         val isOverallRtl = content.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
 
         for (paragraph in paragraphs) {
@@ -209,59 +236,38 @@ class DocumentExporter(private val context: Context) {
         for (line in content.split("\n")) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) {
-                bodyXml.append("<w:p><w:pPr>$bidiTag$alignTag</w:pPr></w:p>")
+                bodyXml.append("<w:p><w:pPr>$bidiTag$alignTag</w:pPr></w:p>\n")
                 continue
             }
 
             val isHeader = trimmed.startsWith("#")
             val isBullet = trimmed.startsWith("* ") || trimmed.startsWith("- ") || trimmed.startsWith("• ")
 
-            val cleanText = when {
-                isHeader -> trimmed.removePrefix("#").removePrefix("#").removePrefix("#").trim()
+            val textWithoutPrefix = when {
+                isHeader -> trimmed.removePrefix("###").removePrefix("##").removePrefix("#").trim()
                 isBullet -> "• " + trimmed.substring(2).trim()
                 else -> trimmed
             }
 
-            val cleanFormatted = cleanText.replace("**", "")
-
-            val headingStyle = if (isHeader) "<w:b/><w:sz w:val=\"26\"/>" else "<w:sz w:val=\"22\"/>"
             val bulletIndent = if (isBullet) "<w:ind w:left=\"360\"/>" else ""
+            val runsXml = buildRunsXml(textWithoutPrefix, isHeader, rtlTag)
 
-            bodyXml.append("""
-                <w:p>
-                  <w:pPr>$bidiTag$alignTag$bulletIndent</w:pPr>
-                  <w:r>
-                    <w:rPr>$headingStyle$rtlTag</w:rPr>
-                    <w:t xml:space="preserve">${escapeXml(cleanFormatted)}</w:t>
-                  </w:r>
-                </w:p>
-            """.trimIndent())
+            bodyXml.append("<w:p><w:pPr>$bidiTag$alignTag$bulletIndent</w:pPr>$runsXml</w:p>\n")
         }
 
-        val documentXml = """
-            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-              <w:body>
-                $bodyXml
-              </w:body>
-            </w:document>
-        """.trimIndent()
+        val documentXml = createDocumentXml(bodyXml.toString())
 
-        val contentTypesXml = """
-            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-            <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-              <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-              <Default Extension="xml" ContentType="application/xml"/>
-              <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-            </Types>
-        """.trimIndent()
+        val contentTypesXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n" +
+            "  <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n" +
+            "  <Default Extension=\"xml\" ContentType=\"application/xml\"/>\n" +
+            "  <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\n" +
+            "</Types>"
 
-        val relsXml = """
-            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-            </Relationships>
-        """.trimIndent()
+        val relsXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n" +
+            "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\n" +
+            "</Relationships>"
 
         context.contentResolver.openOutputStream(uri)?.use { stream ->
             ZipOutputStream(stream).use { zip ->
@@ -280,12 +286,54 @@ class DocumentExporter(private val context: Context) {
         }
     }
 
-    private fun escapeXml(input: String): String {
-        return input.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&apos;")
+    companion object {
+        fun createDocumentXml(bodyXml: String): String {
+            return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
+                "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n" +
+                "  <w:body>\n" +
+                bodyXml +
+                "    <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>\n" +
+                "  </w:body>\n" +
+                "</w:document>"
+        }
+
+        private fun buildRunsXml(text: String, isHeader: Boolean, rtlTag: String): String {
+            val runsBuilder = StringBuilder()
+            val boldRegex = Regex("""\*\*(.*?)\*\*""")
+            var lastIndex = 0
+            val matches = boldRegex.findAll(text)
+
+            val headingSize = if (isHeader) "<w:sz w:val=\"26\"/><w:b/>" else "<w:sz w:val=\"22\"/>"
+
+            for (match in matches) {
+                if (match.range.first > lastIndex) {
+                    val normalPart = text.substring(lastIndex, match.range.first)
+                    if (normalPart.isNotEmpty()) {
+                        runsBuilder.append("<w:r><w:rPr>$headingSize$rtlTag</w:rPr><w:t xml:space=\"preserve\">${escapeXml(normalPart)}</w:t></w:r>")
+                    }
+                }
+                val boldContent = match.groupValues[1]
+                runsBuilder.append("<w:r><w:rPr>$headingSize<w:b/><w:bCs/>$rtlTag</w:rPr><w:t xml:space=\"preserve\">${escapeXml(boldContent)}</w:t></w:r>")
+                lastIndex = match.range.last + 1
+            }
+
+            if (lastIndex < text.length) {
+                val remainingPart = text.substring(lastIndex)
+                if (remainingPart.isNotEmpty()) {
+                    runsBuilder.append("<w:r><w:rPr>$headingSize$rtlTag</w:rPr><w:t xml:space=\"preserve\">${escapeXml(remainingPart)}</w:t></w:r>")
+                }
+            }
+
+            return runsBuilder.toString()
+        }
+
+        fun escapeXml(input: String): String {
+            return input.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;")
+        }
     }
 }
 

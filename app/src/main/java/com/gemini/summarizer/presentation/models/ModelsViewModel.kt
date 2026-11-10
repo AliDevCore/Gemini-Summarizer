@@ -42,8 +42,8 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadModels() {
         viewModelScope.launch {
-            // Clean up deprecated models from previous app versions
-            database.modelDao().deleteDeprecatedModels()
+            // Clean up deprecated or non-text models using centralized ModelFilter
+            purgeDeprecatedModels()
 
             // Ensure default models exist if database was empty
             if (database.modelDao().getModelsCount() == 0) {
@@ -58,6 +58,15 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
             database.modelDao().getAllModelsFlow().collectLatest { list ->
                 _uiState.update { it.copy(models = list) }
+            }
+        }
+    }
+
+    private suspend fun purgeDeprecatedModels() {
+        val allModels = database.modelDao().getAllModelsList()
+        for (model in allModels) {
+            if (!ModelFilter.isAllowedTextModel(model.id, model.displayName)) {
+                database.modelDao().deleteModelById(model.id)
             }
         }
     }
@@ -175,29 +184,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 when (val result = apiClient.listModels(rawKey)) {
                     is GeminiApiResult.Success -> {
                         for (discovered in result.data) {
-                            val cleanId = discovered.id.trim().lowercase()
-                            val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
-                                    (cleanId.contains("flash") || cleanId.contains("pro"))
-
-                            val isExcluded = cleanId.contains("robotics") ||
-                                    cleanId.contains("omni") ||
-                                    cleanId.contains("nano") ||
-                                    cleanId.contains("banana") ||
-                                    cleanId.contains("antigravity") ||
-                                    cleanId.contains("deep-research") ||
-                                    cleanId.contains("gemma") ||
-                                    cleanId.contains("embedding") ||
-                                    cleanId.contains("aqa") ||
-                                    cleanId.contains("imagen") ||
-                                    cleanId.contains("learnlm") ||
-                                    cleanId.contains("tts") ||
-                                    cleanId.contains("whisper") ||
-                                    cleanId.contains("2.5") ||
-                                    cleanId.contains("1.0") ||
-                                    cleanId.endsWith("-001") ||
-                                    cleanId.endsWith("-002")
-
-                            if (!isGeminiFlashOrPro || isExcluded) continue
+                            if (!ModelFilter.isAllowedTextModel(discovered.id, discovered.displayName)) continue
 
                             val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
                             val modelEntity = ModelEntity(
@@ -217,7 +204,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         // Always purge any deprecated models and re-apply version descending priority
-                        database.modelDao().deleteDeprecatedModels()
+                        purgeDeprecatedModels()
                         applyAutoPrioritySorting()
 
                         _uiState.value = _uiState.value.copy(

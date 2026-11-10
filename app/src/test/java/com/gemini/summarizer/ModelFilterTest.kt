@@ -15,6 +15,7 @@ class ModelFilterTest {
         assertTrue(ModelFilter.isAllowedTextModel("gemini-3-flash-preview", "Gemini 3 Flash Preview"))
         assertTrue(ModelFilter.isAllowedTextModel("gemini-flash-lite-latest", "Gemini Flash-Lite Latest"))
         assertTrue(ModelFilter.isAllowedTextModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"))
+        assertTrue(ModelFilter.isAllowedTextModel("gemini-4-argon", "Gemini 4 Argon"))
     }
 
     @Test
@@ -41,3 +42,4 @@ class ModelFilterTest {
         assertFalse(ModelFilter.isAllowedTextModel("gemini-1.5-pro-002", "Gemini 1.5 Pro 002"))
     }
 }
+

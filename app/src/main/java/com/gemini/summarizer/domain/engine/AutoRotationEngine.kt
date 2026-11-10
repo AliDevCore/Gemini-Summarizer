@@ -26,6 +26,11 @@ class AutoRotationEngine(
     private val apiClient: GeminiApiClient = GeminiApiClient()
 ) {
 
+    companion object {
+        // Temporary in-memory cooldown map for retired or unroutable models (avoids permanent DB disabling)
+        private val modelSessionCooldowns = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    }
+
     suspend fun executeWithAutoRotation(
         prompt: String,
         systemInstruction: String? = null,
@@ -51,6 +56,11 @@ class AutoRotationEngine(
 
         // 1. Iterate through models in priority order (strongest first)
         for (model in enabledModels) {
+            val modelCooldown = modelSessionCooldowns[model.id]
+            if (modelCooldown != null && modelCooldown > System.currentTimeMillis()) {
+                continue
+            }
+
             onProgressUpdate?.invoke("Trying model: ${model.displayName}...")
 
             // Group keys by projectId
@@ -82,7 +92,7 @@ class AutoRotationEngine(
                     onProgressUpdate?.invoke("$targetMsg ${model.displayName} with ${accountDisplayName}...")
 
                     var retryCount = 0
-                    val maxRetries = 1
+                    val maxRetries = 2
                     var callResult: GeminiApiResult<String>
 
                     while (true) {
@@ -96,8 +106,11 @@ class AutoRotationEngine(
 
                         if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
                             retryCount++
-                            onProgressUpdate?.invoke("Network lag on ${model.displayName} (${callResult.message}). Retrying in 1s...")
-                            delay(1000L)
+                            val baseWait = 1000L * (1 shl (retryCount - 1))
+                            val jitter = (0..350).random()
+                            val totalWait = baseWait + jitter
+                            onProgressUpdate?.invoke("Network lag on ${model.displayName}. Retrying with backoff in ${totalWait}ms...")
+                            delay(totalWait)
                         } else {
                             break
                         }
@@ -115,8 +128,8 @@ class AutoRotationEngine(
                             )
                         }
                         is GeminiApiResult.ModelUnavailable -> {
-                            onProgressUpdate?.invoke("Model ${model.id} returned 404 (unavailable). Rotating to next model...")
-                            database.modelDao().setModelEnabled(model.id, false)
+                            onProgressUpdate?.invoke("Model ${model.id} returned 404. Setting temporary 10-minute cooldown and rotating...")
+                            modelSessionCooldowns[model.id] = System.currentTimeMillis() + (10 * 60 * 1000L)
                             modelUnavailableForAccount = true
                             break
                         }
@@ -144,20 +157,11 @@ class AutoRotationEngine(
                             onProgressUpdate?.invoke("Key ${keyEntity.id} unauthorized (401/403). Rotating to next key...")
                         }
                         is GeminiApiResult.RequestError -> {
-                            // If Google blocks the IP / requires VPN or content is blocked by safety, abort immediately
-                            if (callResult.message.contains("VPN", ignoreCase = true) ||
-                                callResult.message.contains("location", ignoreCase = true) ||
-                                callResult.message.contains("blocked", ignoreCase = true) ||
-                                callResult.message.contains("Safety", ignoreCase = true)
-                            ) {
-                                return RotationExecutionResult.Failure(callResult.message)
-                            }
-                            onProgressUpdate?.invoke("Model ${model.id} request error (${callResult.message}). Rotating...")
-                            modelUnavailableForAccount = true
-                            break
+                            // Non-retryable request error: Stop rotating and report the real error immediately
+                            return RotationExecutionResult.Failure(callResult.message)
                         }
                         is GeminiApiResult.TransientError -> {
-                            onProgressUpdate?.invoke("Timeout/Network error on ${model.displayName} (${callResult.message}). Rotating...")
+                            onProgressUpdate?.invoke("Network error on ${model.displayName} (${callResult.message}). Rotating to next key...")
                         }
                     }
                 }
