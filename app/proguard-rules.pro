@@ -22,6 +22,17 @@
 
 # Jsoup
 -keep class org.jsoup.** { *; }
+-dontwarn org.jsoup.**
+-dontwarn org.jspecify.annotations.**
+
+# Google Tink & AndroidX Security Crypto
+-keep class androidx.security.crypto.** { *; }
+-keep class com.google.crypto.tink.** { *; }
+-dontwarn com.google.crypto.tink.**
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn org.checkerframework.**
+-dontwarn android.security.**
 
 # OkHttp & Okio
 -dontwarn okhttp3.**
