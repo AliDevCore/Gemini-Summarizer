@@ -11,17 +11,18 @@ android {
     namespace = "com.gemini.summarizer"
     compileSdk = 34
 
-    val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: (project.findProperty("KEYSTORE_PASSWORD") as? String)
-    val keyAlias = System.getenv("KEY_ALIAS") ?: (project.findProperty("KEY_ALIAS") as? String)
-    val keyPassword = System.getenv("KEY_PASSWORD") ?: (project.findProperty("KEY_PASSWORD") as? String)
     val keystoreFile = file("${rootDir}/keystore/release.jks")
-    val hasReleaseSigning = keystorePassword != null && keyAlias != null && keyPassword != null && keystoreFile.exists()
+    val defaultPassword = "gemini_summarizer_secure_keystore_2026"
+    val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: (project.findProperty("KEYSTORE_PASSWORD") as? String) ?: defaultPassword
+    val keyAlias = System.getenv("KEY_ALIAS") ?: (project.findProperty("KEY_ALIAS") as? String) ?: "gemini_key"
+    val keyPassword = System.getenv("KEY_PASSWORD") ?: (project.findProperty("KEY_PASSWORD") as? String) ?: defaultPassword
+    val hasReleaseSigning = keystoreFile.exists()
 
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
                 storeFile = keystoreFile
-                storePassword = keystorePassword
+                this.storePassword = keystorePassword
                 this.keyAlias = keyAlias
                 this.keyPassword = keyPassword
             }

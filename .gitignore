@@ -15,8 +15,7 @@
 local.properties
 *.apk
 *.aab
-*.jks
-*.keystore
+!keystore/release.jks
 keystore.properties
 release-artifacts/
 

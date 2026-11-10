@@ -41,14 +41,16 @@ jobs:
       - name: Run Unit Tests
         run: ./gradlew test --stacktrace
 
-      - name: Decode Release Keystore If Present
+      - name: Verify Release Keystore
         run: |
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
             mkdir -p keystore
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore/release.jks
-            echo "Release keystore decoded successfully."
+            echo "Release keystore decoded from secret."
+          elif [ -f "keystore/release.jks" ]; then
+            echo "Release keystore found in repository."
           else
-            echo "No KEYSTORE_BASE64 secret provided. Gradle will use debug signing."
+            echo "Warning: No release keystore found."
           fi
 
       - name: Build Release APK
