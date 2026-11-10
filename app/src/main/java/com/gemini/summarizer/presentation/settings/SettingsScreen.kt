@@ -149,6 +149,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
+                    Text(
+                        text = "Data Processing Notice: Documents, URLs, and prompts are sent directly to Google Gemini APIs over encrypted HTTPS. Under Google Developer Terms, free-tier API inputs may be logged by Google. Use an enterprise/paid Google Cloud project for zero-retention policies.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+
                     OutlinedButton(
                         onClick = { showClearKeysDialog = true },
                         modifier = Modifier.fillMaxWidth(),

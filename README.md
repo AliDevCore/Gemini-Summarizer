@@ -27,22 +27,23 @@
 
 
 ### 🔑 Key Capabilities
-- **🌐 Direct Web Page & Article Summarization:** Simply paste any web URL (e.g. `https://...`) into the input box; Gemini directly fetches, reads, and delivers an executive summary of the online article or webpage.
-- **📑 Native Multimodal Document Ingestion:** Full PDF documents are transmitted directly to Gemini using high-fidelity native `inlineData` (Base64) encoding. Support for DOCX, TXT, Markdown, and CSV files is seamlessly integrated.
-- **⚡ Autonomous Multi-Tier Auto-Rotation Engine:** Intelligently rotates across registered Google Accounts, API keys, and models to conquer API rate limits without disrupting your workflow.
-- **🌍 Native RTL Support:** Full bidirectional rendering and typography for Persian, Arabic, and multilingual outputs.
-- **✨ Rich Markdown Formatting:** Bold headlines (`**bold**`), clean bullet points (`•`), and structured executive summaries without unsightly raw asterisks.
-- **💾 One-Touch Multi-Format Export:** Clean icon-based export to PDF, DOCX, Markdown, and TXT with proper MIME types.
+- **🌐 Live Web Page & Article Summarization:** Simply paste any web URL (e.g. `https://...`) into the input box; the app fetches the live HTML via **Jsoup**, strips boilerplate, and delivers an executive summary.
+- **📑 Multimodal Document Ingestion:** Full PDF documents (up to 20 MB) are transmitted directly to Gemini using native `inlineData` (Base64) encoding. DOCX files have their text cleanly extracted locally, and TXT/Markdown/CSV are parsed seamlessly.
+- **⚡ Autonomous Auto-Rotation Engine:** Intelligently rotates across registered API keys and models to bypass rate limits (429) without disrupting workflow.
+- **🛑 Cancellable HTTP & Live Diagnostics:** Truly cancellable network calls via coroutines with an on-demand Stop button and live timestamped activity console.
+- **🌍 Per-Paragraph RTL Support:** Proper bidirectional rendering and typography for Persian, Arabic, and multilingual outputs.
+- **✨ Rich Markdown Formatting:** Bold headlines (`**bold**`), italics (`*italic*`), monospace inline code (`` `code` ``), and clean bullet points (`•`).
+- **💾 Multi-Page Styled Export:** Multi-page PDF export using Android `StaticLayout` with RTL support, plus structured DOCX export with Word OpenXML headings and bullets.
 
 ### 🔄 The Core Problem Solved
-Google Gemini API accounts operate under project-level rate limits (e.g., Requests Per Minute [RPM], Tokens Per Minute [TPM], Requests Per Day [RPD]). When a developer or researcher runs high-volume summarization workflows, single-account quotas are quickly exhausted (HTTP 429 / `RESOURCE_EXHAUSTED`).
+Google Gemini API accounts operate under project-level rate limits (RPM, TPM, RPD). When running high-volume summarization workflows, single-account quotas are quickly exhausted (HTTP 429 / `RESOURCE_EXHAUSTED`).
 
 **Gemini Summarizer solves this through an autonomous multi-tier Auto-Rotation Engine:**
-1. Allows registering multiple independent Google Accounts.
-2. Supports mapping multiple API Keys to their respective Google Cloud Project IDs.
-3. Dynamically routes requests through the strongest available Gemini model across independent accounts.
-4. Seamlessly rotates to alternate accounts/projects upon hitting rate limits without interrupting the user.
-5. Employs hierarchical text chunking for documents that exceed standard context limits.
+1. Manages a flexible pool of Gemini API keys.
+2. Dynamically routes requests through the strongest available Gemini model (prioritizing 3.8 Flash, 3.7 Flash, 3.1 Pro, etc.).
+3. Detects region/location limitations immediately to prevent wasted quota and inform the user.
+4. Seamlessly rotates to alternate keys/models upon hitting rate limits without interrupting the user.
+5. Ingests up to 30,000 words per request in a single unified pass.
 
 ---
 

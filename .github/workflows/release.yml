@@ -7,6 +7,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -58,6 +62,15 @@ jobs:
         run: |
           mkdir -p release-artifacts
           find app/build/outputs/apk/release/ -name "*.apk" -exec cp {} release-artifacts/Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk \;
+          cd release-artifacts
+          sha256sum *.apk > checksums.sha256
+          cd ..
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gemini-Summarizer-APK-${{ steps.tag_generator.outputs.TAG_NAME }}
+          path: release-artifacts/*
 
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
@@ -72,11 +85,14 @@ jobs:
             - **Asset:** Standalone signed Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
             
             #### Highlights:
-            - **Persistent Signature:** Signed with the official project release certificate for seamless in-place updates without data loss.
+            - **Robust Architecture:** Complete hardening across API ingestion, Jsoup web scraper, and multi-page export.
+            - **Persistent Signature:** Signed with the official project release certificate for seamless in-place updates.
             - **Updated Models:** Gemini 3.1 Pro Preview, Gemini 3 Flash Preview, Gemini 3.8 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite.
             - **Direct API Keys:** Streamlined direct API key pool management.
-            - **Refined Material 3 UI:** Fixed text wrapping and button clipping across all screen sizes.
-          files: release-artifacts/*.apk
+            - **Refined Material 3 UI:** Fixed text wrapping, button clipping, and per-paragraph RTL rendering.
+          files: |
+            release-artifacts/*.apk
+            release-artifacts/checksums.sha256
           draft: false
           prerelease: false
         env:

@@ -43,7 +43,7 @@ class SettingsDataStore(private val context: Context) {
     }
 
     val saveOriginalTextFlow: Flow<Boolean> = context.dataStore.data.map {
-        it[KEY_SAVE_ORIGINAL_TEXT] ?: true
+        it[KEY_SAVE_ORIGINAL_TEXT] ?: false
     }
 
     suspend fun setAutoModelPriority(enabled: Boolean) {

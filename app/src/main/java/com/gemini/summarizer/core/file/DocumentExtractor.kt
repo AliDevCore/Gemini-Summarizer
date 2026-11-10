@@ -48,8 +48,14 @@ class DocumentExtractor(private val context: Context) {
                     )
                 }
                 "pdf" -> {
-                    val pdfResult = extractPdfText(uri, fileName)
-                    Result.success(pdfResult)
+                    // PDF files are ingested directly into Gemini via native inlineData (Base64)
+                    Result.success(
+                        ExtractedDocument(
+                            fileName = fileName,
+                            text = "[Native PDF Document]",
+                            isScannedOrEmpty = false
+                        )
+                    )
                 }
                 else -> {
                     // Fallback to plain text attempt
@@ -123,46 +129,6 @@ class DocumentExtractor(private val context: Context) {
             }
         }
         return stringBuilder.toString().trim()
-    }
-
-    private fun extractPdfText(uri: Uri, fileName: String): ExtractedDocument {
-        // Native basic extraction fallback for text streams within PDF
-        val contentBuilder = StringBuilder()
-        var estimatedPages = 1
-
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val bytes = stream.readBytes()
-            val raw = String(bytes, Charsets.ISO_8859_1)
-
-            // Estimate pages from /Count or /Type /Page
-            val pageMatches = Regex("/Type\\s*/Page[^s]").findAll(raw).count()
-            if (pageMatches > 0) estimatedPages = pageMatches
-
-            // Extract text from BT ... ET (Begin Text ... End Text) blocks
-            val btBlocks = Regex("BT[\\s\\S]*?ET").findAll(raw)
-            for (block in btBlocks) {
-                val textStrings = Regex("\\((.*?)\\)").findAll(block.value)
-                for (match in textStrings) {
-                    val decoded = match.groupValues[1]
-                        .replace("\\(", "(")
-                        .replace("\\)", ")")
-                        .replace("\\n", "\n")
-                        .replace("\\r", "\r")
-                    contentBuilder.append(decoded).append(" ")
-                }
-                contentBuilder.append("\n")
-            }
-        }
-
-        val extracted = contentBuilder.toString().trim()
-        val isScanned = extracted.isBlank() || extracted.length < 30
-
-        return ExtractedDocument(
-            fileName = fileName,
-            text = if (isScanned) "" else extracted,
-            pageCount = estimatedPages,
-            isScannedOrEmpty = isScanned
-        )
     }
 }
 

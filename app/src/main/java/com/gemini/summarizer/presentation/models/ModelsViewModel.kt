@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.ModelEntity
-import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.network.GeminiApiClient
 import com.gemini.summarizer.core.network.GeminiApiResult
@@ -116,16 +115,16 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun extractVersionScore(id: String): Int {
-        if (!id.startsWith("gemini-", ignoreCase = true)) return 0
-        if (id.contains("latest")) return 2999
+    private fun extractVersionScore(id: String): Double {
+        if (!id.startsWith("gemini-", ignoreCase = true)) return 0.0
+        if (id.contains("latest")) return 2.99
         val match = Regex("""^gemini-(\d+)(?:\.(\d+))?""", RegexOption.IGNORE_CASE).find(id)
         if (match != null) {
-            val major = match.groupValues[1].toIntOrNull() ?: 0
-            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
-            return (major * 1000) + minor
+            val major = match.groupValues[1].toDoubleOrNull() ?: 0.0
+            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toDoubleOrNull() ?: 0.0
+            return major + (minor / 10.0)
         }
-        return 0
+        return 0.0
     }
 
     private fun extractTierScore(id: String): Int {
@@ -176,7 +175,29 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 when (val result = apiClient.listModels(rawKey)) {
                     is GeminiApiResult.Success -> {
                         for (discovered in result.data) {
-                            if (!ModelFilter.isAllowedTextModel(discovered.id, discovered.displayName)) continue
+                            val cleanId = discovered.id.trim().lowercase()
+                            val isGeminiFlashOrPro = cleanId.startsWith("gemini-") &&
+                                    (cleanId.contains("flash") || cleanId.contains("pro"))
+
+                            val isExcluded = cleanId.contains("robotics") ||
+                                    cleanId.contains("omni") ||
+                                    cleanId.contains("nano") ||
+                                    cleanId.contains("banana") ||
+                                    cleanId.contains("antigravity") ||
+                                    cleanId.contains("deep-research") ||
+                                    cleanId.contains("gemma") ||
+                                    cleanId.contains("embedding") ||
+                                    cleanId.contains("aqa") ||
+                                    cleanId.contains("imagen") ||
+                                    cleanId.contains("learnlm") ||
+                                    cleanId.contains("tts") ||
+                                    cleanId.contains("whisper") ||
+                                    cleanId.contains("2.5") ||
+                                    cleanId.contains("1.0") ||
+                                    cleanId.endsWith("-001") ||
+                                    cleanId.endsWith("-002")
+
+                            if (!isGeminiFlashOrPro || isExcluded) continue
 
                             val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
                             val modelEntity = ModelEntity(

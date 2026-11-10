@@ -29,5 +29,16 @@ class SummaryConfigTest {
         assertTrue(instruction.contains("Accurately preserve all specific numbers"))
         assertTrue(instruction.contains("Retain precise technical terms"))
     }
+
+    @Test
+    fun testBuildSystemInstructionWithCustomPrompt() {
+        val config = SummaryConfig(
+            targetLanguage = "English",
+            customPrompt = "Focus exclusively on financial statistics and revenue."
+        )
+        val instruction = config.buildSystemInstruction()
+        assertTrue(instruction.contains("USER SPECIAL DIRECTIVE"))
+        assertTrue(instruction.contains("Focus exclusively on financial statistics and revenue."))
+    }
 }
 

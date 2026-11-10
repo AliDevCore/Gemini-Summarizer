@@ -378,16 +378,6 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
             // Results Section
             uiState.summaryResult?.let { result ->
-                val isRtlText = remember(result.summaryText, uiState.targetLanguage) {
-                    uiState.targetLanguage.equals("persian", ignoreCase = true) ||
-                    uiState.targetLanguage.equals("arabic", ignoreCase = true) ||
-                    result.summaryText.any { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' }
-                }
-
-                val formattedSummary = remember(result.summaryText) {
-                    MarkdownRenderer.parse(result.summaryText)
-                }
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
@@ -417,9 +407,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             }
                         }
 
-                        // Metadata Badges
+                        // Metadata Badges (without internal project ID clutter)
                         Text(
-                            text = "Model: ${result.modelUsed} | Account: ${result.accountUsed} | Project: ${result.projectId} | Stages: ${result.stepsCount}",
+                            text = "Model: ${result.modelUsed} | Key: ${result.accountUsed} | Stages: ${result.stepsCount}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -431,18 +421,28 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
                         HorizontalDivider()
 
-                        // RTL or LTR aware display box with clean Markdown rendering
-                        CompositionLocalProvider(
-                            LocalLayoutDirection provides (if (isRtlText) LayoutDirection.Rtl else LayoutDirection.Ltr)
-                        ) {
-                            SelectionContainer {
-                                Text(
-                                    text = formattedSummary,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    lineHeight = 26.sp,
-                                    textAlign = if (isRtlText) TextAlign.Right else TextAlign.Left,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                        // Per-paragraph RTL or LTR aware display with rich Markdown rendering
+                        val paragraphs = remember(result.summaryText) {
+                            result.summaryText.split("\n\n").filter { it.isNotBlank() }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            paragraphs.forEach { paragraph ->
+                                val isRtl = paragraph.count { it in '\u0600'..'\u06FF' || it in '\u0750'..'\u077F' } >
+                                        paragraph.count { it in 'A'..'Z' || it in 'a'..'z' }
+                                CompositionLocalProvider(
+                                    LocalLayoutDirection provides (if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr)
+                                ) {
+                                    SelectionContainer {
+                                        Text(
+                                            text = MarkdownRenderer.parse(paragraph),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            lineHeight = 26.sp,
+                                            textAlign = if (isRtl) TextAlign.Right else TextAlign.Left,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
                             }
                         }
 
