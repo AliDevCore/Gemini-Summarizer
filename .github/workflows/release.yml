@@ -55,9 +55,9 @@ jobs:
 
       - name: Build Release APK
         env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'gemini_summarizer_secure_keystore_2026' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'gemini_key' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'gemini_summarizer_secure_keystore_2026' }}
         run: ./gradlew assembleRelease -PVERSION_CODE=${{ github.run_number }} -PVERSION_NAME="1.0.${{ github.run_number }}" --stacktrace
 
       - name: Determine Release Tag
