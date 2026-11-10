@@ -190,6 +190,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                 item { Spacer(Modifier.height(90.dp)) }
             }
         }
+    }
 
         // Add API Key Dialog
         if (uiState.showAddKeyDialog) {
