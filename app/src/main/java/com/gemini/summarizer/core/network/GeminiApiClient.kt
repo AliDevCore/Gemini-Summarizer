@@ -18,12 +18,13 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 
 sealed class GeminiApiResult<out T> {
+    open val message: String get() = ""
     data class Success<out T>(val data: T) : GeminiApiResult<T>()
-    data class RateLimited(val message: String, val retryAfterSeconds: Long? = null) : GeminiApiResult<Nothing>()
-    data class InvalidKey(val message: String) : GeminiApiResult<Nothing>()
-    data class ModelUnavailable(val message: String) : GeminiApiResult<Nothing>()
-    data class TransientError(val message: String, val statusCode: Int? = null) : GeminiApiResult<Nothing>()
-    data class RequestError(val message: String) : GeminiApiResult<Nothing>()
+    data class RateLimited(override val message: String, val retryAfterSeconds: Long? = null) : GeminiApiResult<Nothing>()
+    data class InvalidKey(override val message: String) : GeminiApiResult<Nothing>()
+    data class ModelUnavailable(override val message: String) : GeminiApiResult<Nothing>()
+    data class TransientError(override val message: String, val statusCode: Int? = null) : GeminiApiResult<Nothing>()
+    data class RequestError(override val message: String) : GeminiApiResult<Nothing>()
 }
 
 data class GeminiFileData(

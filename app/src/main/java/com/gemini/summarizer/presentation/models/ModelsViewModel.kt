@@ -158,7 +158,14 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                         errorMessage = "Cloudflare rate limit hit (429)."
                     )
                 }
-                else -> {
+                is GeminiApiResult.TransientError -> {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = null,
+                        errorMessage = "Network error: ${testRes.message}"
+                    )
+                }
+                is GeminiApiResult.RequestError -> {
                     _uiState.value = _uiState.value.copy(
                         isRefreshing = false,
                         statusMessage = null,

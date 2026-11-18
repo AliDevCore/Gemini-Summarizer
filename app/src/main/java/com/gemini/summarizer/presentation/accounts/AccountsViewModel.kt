@@ -201,7 +201,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 is GeminiApiResult.RateLimited -> {
                     database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Rate limited (429)")
                 }
-                else -> {
+                is GeminiApiResult.TransientError -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Network lag (${res.message})")
+                }
+                is GeminiApiResult.RequestError -> {
                     database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, res.message.ifBlank { "Connection failed" })
                 }
             }
