@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -38,23 +37,15 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         loadModels()
-        observeAutoPriority()
     }
 
     private fun loadModels() {
         viewModelScope.launch {
-            // Clean up deprecated or non-text models using centralized ModelFilter
             purgeDeprecatedModels()
 
-            // Ensure default models exist if database was empty
+            // Ensure Cloudflare Gemma 4 model exists
             if (database.modelDao().getModelsCount() == 0) {
                 database.modelDao().insertModels(AppDatabase.getDefaultModels())
-            }
-
-            // Only auto-sort if user has auto-priority enabled
-            val isAutoEnabled = settingsDataStore.autoModelPriorityFlow.first()
-            if (isAutoEnabled) {
-                applyAutoPrioritySorting()
             }
 
             database.modelDao().getAllModelsFlow().collectLatest { list ->
@@ -70,22 +61,15 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 database.modelDao().deleteModelById(model.id)
             }
         }
-    }
-
-    private fun observeAutoPriority() {
-        viewModelScope.launch {
-            settingsDataStore.autoModelPriorityFlow.collectLatest { enabled ->
-                _uiState.update { it.copy(isAutoPriorityEnabled = enabled) }
-            }
+        for (model in AppDatabase.getDefaultModels()) {
+            database.modelDao().insertModelIfNotExist(model)
         }
     }
 
     fun toggleAutoPriority(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.setAutoModelPriority(enabled)
-            if (enabled) {
-                applyAutoPrioritySorting()
-            }
+            _uiState.update { it.copy(isAutoPriorityEnabled = enabled) }
         }
     }
 
@@ -108,128 +92,80 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun moveModelPriority(model: ModelEntity, moveUp: Boolean) {
-        viewModelScope.launch {
-            val allModels = database.modelDao().getAllModelsList()
-            val currentIndex = allModels.indexOfFirst { it.id == model.id }
-            if (currentIndex == -1) return@launch
-            val targetIndex = if (moveUp) currentIndex - 1 else currentIndex + 1
-            if (targetIndex in allModels.indices) {
-                val targetModel = allModels[targetIndex]
-                val currentP = model.priority
-                val targetP = targetModel.priority
-                // Swap priorities properly
-                database.modelDao().setModelPriority(model.id, targetP)
-                database.modelDao().setModelPriority(targetModel.id, currentP)
-                settingsDataStore.setAutoModelPriority(false)
-            }
-        }
-    }
-
-    private fun extractVersionScore(id: String): Double {
-        if (!id.startsWith("gemini-", ignoreCase = true)) return 0.0
-        if (id.contains("latest")) return 2.99
-        val match = Regex("""^gemini-(\d+)(?:\.(\d+))?""", RegexOption.IGNORE_CASE).find(id)
-        if (match != null) {
-            val major = match.groupValues[1].toDoubleOrNull() ?: 0.0
-            val minor = match.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }?.toDoubleOrNull() ?: 0.0
-            return major + (minor / 10.0)
-        }
-        return 0.0
-    }
-
-    private fun extractTierScore(id: String): Int {
-        return when {
-            id.contains("pro") -> 1
-            id.contains("flash-lite") || id.contains("lite") -> 3
-            id.contains("flash") -> 2
-            else -> 4
-        }
-    }
-
-    private suspend fun applyAutoPrioritySorting() {
-        // Sort descending by model version: 3.8 > 3.7 > 3.6 > 3.5 > 3.1 > 3.0
-        val allModels = database.modelDao().getAllModelsList()
-        val sorted = allModels.sortedWith(
-            compareByDescending<ModelEntity> { m -> extractVersionScore(m.id) }
-                .thenBy { m -> extractTierScore(m.id) }
-                .thenBy { m -> !m.isStable }
-        )
-
-        for ((index, item) in sorted.withIndex()) {
-            database.modelDao().setModelPriority(item.id, index + 1)
-        }
+        // Single model architecture maintains priority 1
     }
 
     fun refreshModelsFromApi() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isRefreshing = true,
-                statusMessage = "Discovering latest models from Gemini Developer API...",
+                statusMessage = "Verifying connection to Cloudflare Workers AI...",
                 errorMessage = null
             )
 
-            // Find an active API key
             val keys = database.apiKeyDao().getAllValidKeys()
             if (keys.isEmpty()) {
+                purgeDeprecatedModels()
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
-                    statusMessage = null,
-                    errorMessage = "No active API Keys found. Add a valid API key in Accounts to discover models."
+                    statusMessage = "Model @cf/google/gemma-4-26b-a4b-it ready. Add a Cloudflare API Key to test live connection.",
+                    errorMessage = null
                 )
                 return@launch
             }
 
-            var discoveredCount = 0
-            for (keyEntity in keys) {
-                val rawKey = securityManager.getApiKey(keyEntity.keyIdentifier) ?: continue
-                when (val result = apiClient.listModels(rawKey)) {
-                    is GeminiApiResult.Success -> {
-                        for (discovered in result.data) {
-                            if (!ModelFilter.isAllowedTextModel(discovered.id, discovered.displayName)) continue
+            val keyEntity = keys.first()
+            val rawKey = securityManager.getApiKey(keyEntity.keyIdentifier)
+            val accountId = keyEntity.projectId
 
-                            val isPreview = discovered.id.contains("preview") || discovered.id.contains("exp")
-                            val modelEntity = ModelEntity(
-                                id = discovered.id,
-                                displayName = discovered.displayName,
-                                description = discovered.description,
-                                inputTokenLimit = discovered.inputTokenLimit,
-                                outputTokenLimit = discovered.outputTokenLimit,
-                                isPreview = isPreview,
-                                isStable = !isPreview,
-                                supportsTextGeneration = true,
-                                priority = 10,
-                                isEnabled = true
-                            )
-                            database.modelDao().insertModelIfNotExist(modelEntity)
-                            discoveredCount++
-                        }
-
-                        // Always purge any deprecated models and re-apply version descending priority
-                        purgeDeprecatedModels()
-                        applyAutoPrioritySorting()
-
-                        _uiState.value = _uiState.value.copy(
-                            isRefreshing = false,
-                            statusMessage = "Successfully updated model inventory ($discoveredCount active models verified).",
-                            errorMessage = null
-                        )
-                        return@launch
-                    }
-                    is GeminiApiResult.InvalidKey -> {
-                        database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, "Key rejected during model listing")
-                    }
-                    else -> {
-                        // Try next key
-                    }
-                }
+            if (rawKey.isNullOrBlank() || accountId.isBlank()) {
+                purgeDeprecatedModels()
+                _uiState.value = _uiState.value.copy(
+                    isRefreshing = false,
+                    statusMessage = "Model @cf/google/gemma-4-26b-a4b-it ready.",
+                    errorMessage = "Active key is missing Token or Account ID."
+                )
+                return@launch
             }
 
-            _uiState.value = _uiState.value.copy(
-                isRefreshing = false,
-                statusMessage = null,
-                errorMessage = "Could not list models with current API keys. Please verify your keys and network."
-            )
+            when (val testRes = apiClient.testConnection(apiToken = rawKey, accountId = accountId)) {
+                is GeminiApiResult.Success -> {
+                    purgeDeprecatedModels()
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = "Connection verified! Cloudflare Workers AI with Gemma 4 26B is active.",
+                        errorMessage = null
+                    )
+                }
+                is GeminiApiResult.InvalidKey -> {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = null,
+                        errorMessage = "Cloudflare API Token is unauthorized (401/403)."
+                    )
+                }
+                is GeminiApiResult.ModelUnavailable -> {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = null,
+                        errorMessage = "Cloudflare Account ID ($accountId) not found (404)."
+                    )
+                }
+                is GeminiApiResult.RateLimited -> {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = null,
+                        errorMessage = "Cloudflare rate limit hit (429)."
+                    )
+                }
+                else -> {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshing = false,
+                        statusMessage = null,
+                        errorMessage = testRes.message
+                    )
+                }
+            }
         }
     }
 }
-

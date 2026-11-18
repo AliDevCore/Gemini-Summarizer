@@ -26,11 +26,6 @@ class AutoRotationEngine(
     private val apiClient: GeminiApiClient = GeminiApiClient()
 ) {
 
-    companion object {
-        // Temporary in-memory cooldown map for retired or unroutable models (avoids permanent DB disabling)
-        private val modelSessionCooldowns = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    }
-
     suspend fun executeWithAutoRotation(
         prompt: String,
         systemInstruction: String? = null,
@@ -40,143 +35,139 @@ class AutoRotationEngine(
         val now = System.currentTimeMillis()
         database.quotaStateDao().clearExpiredCooldowns(now)
 
-        val enabledModels = database.modelDao().getEnabledTextModels()
+        var enabledModels = database.modelDao().getEnabledTextModels()
         if (enabledModels.isEmpty()) {
-            return RotationExecutionResult.Failure("No active Gemini models configured. Please enable at least one model in Models.")
+            database.modelDao().insertModels(AppDatabase.getDefaultModels())
+            enabledModels = database.modelDao().getEnabledTextModels()
         }
+
+        val targetModel = enabledModels.firstOrNull() ?: AppDatabase.getDefaultModels().first()
 
         // Get all valid active API keys directly across all accounts
         val validKeys = database.apiKeyDao().getAllValidKeys()
         if (validKeys.isEmpty()) {
-            return RotationExecutionResult.Failure("No active API Keys found. Please add at least one Gemini API Key.")
+            return RotationExecutionResult.Failure(
+                "No active Cloudflare API Keys found. Please add your Cloudflare API Token and Account ID in Accounts."
+            )
         }
 
         var earliestCooldown: Long? = null
-        var totalAttempts = 0
+        var lastErrorMessage: String? = null
 
-        // 1. Iterate through models in priority order (strongest first)
-        for (model in enabledModels) {
-            val modelCooldown = modelSessionCooldowns[model.id]
-            if (modelCooldown != null && modelCooldown > System.currentTimeMillis()) {
+        // Rotate across available Cloudflare keys
+        for (keyEntity in validKeys) {
+            val rawApiKey = securityManager.getApiKey(keyEntity.keyIdentifier)
+            if (rawApiKey.isNullOrBlank()) {
+                database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, "Token missing in secure storage")
                 continue
             }
 
-            onProgressUpdate?.invoke("Trying model: ${model.displayName}...")
+            val accountId = keyEntity.projectId.trim()
+            if (accountId.isBlank()) {
+                database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, "Missing Cloudflare Account ID")
+                continue
+            }
 
-            // Group keys by projectId
-            val keysByProject = validKeys.groupBy { it.projectId }
-            var modelUnavailableForAccount = false
-
-            for ((projectId, projectKeys) in keysByProject) {
-                val quotaState = database.quotaStateDao().getQuotaState(projectId, model.id)
-                if (quotaState != null && quotaState.isRateLimited && quotaState.cooldownUntilTimestamp > System.currentTimeMillis()) {
-                    if (earliestCooldown == null || quotaState.cooldownUntilTimestamp < earliestCooldown) {
-                        earliestCooldown = quotaState.cooldownUntilTimestamp
-                    }
-                    continue
+            // Check if key is currently rate limited
+            val quotaState = database.quotaStateDao().getQuotaState(accountId, targetModel.id)
+            if (quotaState != null && quotaState.isRateLimited && quotaState.cooldownUntilTimestamp > System.currentTimeMillis()) {
+                if (earliestCooldown == null || quotaState.cooldownUntilTimestamp < earliestCooldown) {
+                    earliestCooldown = quotaState.cooldownUntilTimestamp
                 }
+                continue
+            }
 
-                for (keyEntity in projectKeys) {
-                    val rawApiKey = securityManager.getApiKey(keyEntity.keyIdentifier)
-                    if (rawApiKey.isNullOrBlank()) {
-                        database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, "Key missing in secure storage")
-                        continue
-                    }
+            // Look up account label for user display
+            val account = database.accountDao().getAccountById(keyEntity.accountId)
+            val accountDisplayName = account?.name ?: "Key #${keyEntity.id}"
 
-                    // Look up account label for user display
-                    val account = database.accountDao().getAccountById(keyEntity.accountId)
-                    val accountDisplayName = account?.name ?: "Key #${keyEntity.id}"
+            onProgressUpdate?.invoke("Querying ${targetModel.displayName} with $accountDisplayName...")
 
-                    totalAttempts++
-                    val targetMsg = if (fileData != null) "Transmitting document to" else "Querying"
-                    onProgressUpdate?.invoke("$targetMsg ${model.displayName} with ${accountDisplayName}...")
+            var retryCount = 0
+            val maxRetries = 2
+            var callResult: GeminiApiResult<String>
 
-                    var retryCount = 0
-                    val maxRetries = 2
-                    var callResult: GeminiApiResult<String>
+            while (true) {
+                callResult = apiClient.generateContent(
+                    modelId = targetModel.id,
+                    accountId = accountId,
+                    apiToken = rawApiKey,
+                    prompt = prompt,
+                    systemInstruction = systemInstruction
+                )
 
-                    while (true) {
-                        callResult = apiClient.generateContent(
-                            modelId = model.id,
-                            apiKey = rawApiKey,
-                            prompt = prompt,
-                            systemInstruction = systemInstruction,
-                            fileData = fileData
+                if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
+                    retryCount++
+                    val baseWait = 1000L * (1 shl (retryCount - 1))
+                    val jitter = (0..350).random()
+                    val totalWait = baseWait + jitter
+                    onProgressUpdate?.invoke("Temporary network lag. Retrying with backoff in ${totalWait}ms...")
+                    delay(totalWait)
+                } else {
+                    break
+                }
+            }
+
+            when (callResult) {
+                is GeminiApiResult.Success -> {
+                    onProgressUpdate?.invoke("Success! Generated summary via ${targetModel.displayName}.")
+                    database.apiKeyDao().updateLastUsed(keyEntity.id, System.currentTimeMillis())
+                    return RotationExecutionResult.Success(
+                        outputText = callResult.data,
+                        modelUsed = targetModel.displayName,
+                        accountName = accountDisplayName,
+                        projectId = accountId
+                    )
+                }
+                is GeminiApiResult.RateLimited -> {
+                    val cooldownSec = callResult.retryAfterSeconds ?: 60L
+                    val cooldownUntil = System.currentTimeMillis() + (cooldownSec * 1000L)
+                    database.quotaStateDao().insertOrUpdate(
+                        QuotaStateEntity(
+                            projectId = accountId,
+                            modelId = targetModel.id,
+                            isRateLimited = true,
+                            cooldownUntilTimestamp = cooldownUntil,
+                            failureReason = callResult.message
                         )
-
-                        if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
-                            retryCount++
-                            val baseWait = 1000L * (1 shl (retryCount - 1))
-                            val jitter = (0..350).random()
-                            val totalWait = baseWait + jitter
-                            onProgressUpdate?.invoke("Network lag on ${model.displayName}. Retrying with backoff in ${totalWait}ms...")
-                            delay(totalWait)
-                        } else {
-                            break
-                        }
-                    }
-
-                    when (callResult) {
-                        is GeminiApiResult.Success -> {
-                            onProgressUpdate?.invoke("Success! Generated summary via ${model.displayName}.")
-                            database.apiKeyDao().updateLastUsed(keyEntity.id, System.currentTimeMillis())
-                            return RotationExecutionResult.Success(
-                                outputText = callResult.data,
-                                modelUsed = model.id,
-                                accountName = accountDisplayName,
-                                projectId = projectId
-                            )
-                        }
-                        is GeminiApiResult.ModelUnavailable -> {
-                            onProgressUpdate?.invoke("Model ${model.id} returned 404. Setting temporary 10-minute cooldown and rotating...")
-                            modelSessionCooldowns[model.id] = System.currentTimeMillis() + (10 * 60 * 1000L)
-                            modelUnavailableForAccount = true
-                            break
-                        }
-                        is GeminiApiResult.RateLimited -> {
-                            val cooldownSec = callResult.retryAfterSeconds ?: 60L
-                            val cooldownUntil = System.currentTimeMillis() + (cooldownSec * 1000L)
-                            database.quotaStateDao().insertOrUpdate(
-                                QuotaStateEntity(
-                                    projectId = projectId,
-                                    modelId = model.id,
-                                    isRateLimited = true,
-                                    cooldownUntilTimestamp = cooldownUntil,
-                                    failureReason = callResult.message
-                                )
-                            )
-                            onProgressUpdate?.invoke("Quota limit (429) on ${model.displayName}. Rotating...")
-                            break // Try next project
-                        }
-                        is GeminiApiResult.InvalidKey -> {
-                            database.apiKeyDao().setKeyStatus(
-                                keyId = keyEntity.id,
-                                isInvalid = true,
-                                message = "Key invalid or unauthorized (HTTP 401/403)"
-                            )
-                            onProgressUpdate?.invoke("Key ${keyEntity.id} unauthorized (401/403). Rotating to next key...")
-                        }
-                        is GeminiApiResult.RequestError -> {
-                            // Non-retryable request error: Stop rotating and report the real error immediately
-                            return RotationExecutionResult.Failure(callResult.message)
-                        }
-                        is GeminiApiResult.TransientError -> {
-                            onProgressUpdate?.invoke("Network error on ${model.displayName} (${callResult.message}). Rotating to next key...")
-                        }
-                    }
+                    )
+                    onProgressUpdate?.invoke("Rate limit (429) hit on $accountDisplayName. Rotating to next Cloudflare key...")
+                    lastErrorMessage = callResult.message
                 }
-
-                if (modelUnavailableForAccount) {
-                    break // Break out of this model's projects and move to next model
+                is GeminiApiResult.InvalidKey -> {
+                    database.apiKeyDao().setKeyStatus(
+                        keyId = keyEntity.id,
+                        isInvalid = true,
+                        message = "Invalid Token (HTTP 401/403)"
+                    )
+                    onProgressUpdate?.invoke("API Token unauthorized on $accountDisplayName. Rotating to next key...")
+                    lastErrorMessage = callResult.message
+                }
+                is GeminiApiResult.ModelUnavailable -> {
+                    database.apiKeyDao().setKeyStatus(
+                        keyId = keyEntity.id,
+                        isInvalid = true,
+                        message = "Invalid Account ID or model unavailable (HTTP 404)"
+                    )
+                    onProgressUpdate?.invoke("Account ID $accountId returned 404. Rotating to next key...")
+                    lastErrorMessage = callResult.message
+                }
+                is GeminiApiResult.TransientError -> {
+                    onProgressUpdate?.invoke("Temporary error on $accountDisplayName (${callResult.message}). Rotating...")
+                    lastErrorMessage = callResult.message
+                }
+                is GeminiApiResult.RequestError -> {
+                    onProgressUpdate?.invoke("Request failed on $accountDisplayName: ${callResult.message}. Rotating...")
+                    lastErrorMessage = callResult.message
                 }
             }
         }
 
         val cooldownMessage = if (earliestCooldown != null) {
             val secondsRemaining = ((earliestCooldown - System.currentTimeMillis()) / 1000L).coerceAtLeast(0)
-            "All available Gemini quotas across all active accounts have been exhausted. Earliest quota reset in approximately $secondsRemaining seconds."
+            "All configured Cloudflare API keys are currently rate-limited. Earliest reset in approximately $secondsRemaining seconds."
         } else {
-            "All available combinations of accounts and models failed. Please verify your API keys."
+            lastErrorMessage ?: "All available Cloudflare API keys failed. Please verify your Tokens and Account IDs in Accounts."
         }
 
         return RotationExecutionResult.AllExhausted(cooldownMessage, earliestCooldown)

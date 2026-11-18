@@ -126,118 +126,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processFileUri(uri: Uri) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, progressMessage = "Preparing document for Gemini...") }
+            _uiState.update { it.copy(isLoading = true, progressMessage = "Opening document...") }
             withContext(Dispatchers.IO) {
                 try {
-                    val contentResolver = getApplication<Application>().contentResolver
-                    var fileName = "Document"
-                    val cursor = contentResolver.query(uri, null, null, null, null)
-                    cursor?.use {
-                        if (it.moveToFirst()) {
-                            val index = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                            if (index != -1) {
-                                fileName = it.getString(index)
-                            }
-                        }
-                    }
-
-                    val ext = fileName.substringAfterLast(".", "").lowercase()
-
-                    when (ext) {
-                        "pdf" -> {
-                            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                            if (bytes == null || bytes.isEmpty()) {
+                    val extractResult = documentExtractor.extractFromUri(uri)
+                    extractResult.fold(
+                        onSuccess = { doc ->
+                            if (doc.text.isBlank()) {
                                 _uiState.update {
                                     it.copy(
                                         isLoading = false,
                                         progressMessage = "",
-                                        errorMessage = "Selected PDF file is empty."
-                                    )
-                                }
-                                return@withContext
-                            }
-
-                            if (bytes.size > 20 * 1024 * 1024) {
-                                _uiState.update {
-                                    it.copy(
-                                        isLoading = false,
-                                        progressMessage = "",
-                                        errorMessage = "PDF file exceeds the 20 MB inline limit. Please choose a smaller document."
-                                    )
-                                }
-                                return@withContext
-                            }
-
-                            val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                            _uiState.update {
-                                it.copy(
-                                    selectedFileName = fileName,
-                                    selectedFileBase64 = base64Data,
-                                    selectedFileText = null,
-                                    selectedFileMimeType = "application/pdf",
-                                    isLoading = false,
-                                    progressMessage = "",
-                                    errorMessage = null
-                                )
-                            }
-                        }
-                        "docx" -> {
-                            val extractResult = documentExtractor.extractFromUri(uri)
-                            extractResult.fold(
-                                onSuccess = { doc ->
-                                    if (doc.text.isBlank()) {
-                                        _uiState.update {
-                                            it.copy(
-                                                isLoading = false,
-                                                progressMessage = "",
-                                                errorMessage = "Could not extract readable text from DOCX file."
-                                            )
-                                        }
-                                    } else {
-                                        _uiState.update {
-                                            it.copy(
-                                                selectedFileName = fileName,
-                                                selectedFileBase64 = null,
-                                                selectedFileText = doc.text,
-                                                selectedFileMimeType = "text/plain",
-                                                isLoading = false,
-                                                progressMessage = "",
-                                                errorMessage = null
-                                            )
-                                        }
-                                    }
-                                },
-                                onFailure = { err ->
-                                    _uiState.update {
-                                        it.copy(
-                                            isLoading = false,
-                                            progressMessage = "",
-                                            errorMessage = "Failed to parse DOCX: ${err.message}"
-                                        )
-                                    }
-                                }
-                            )
-                        }
-                        else -> {
-                            // Plain text formats: txt, md, markdown, csv, json, etc.
-                            val text = contentResolver.openInputStream(uri)?.use { stream ->
-                                stream.bufferedReader(Charsets.UTF_8).readText()
-                            } ?: ""
-
-                            if (text.isBlank()) {
-                                _uiState.update {
-                                    it.copy(
-                                        isLoading = false,
-                                        progressMessage = "",
-                                        errorMessage = "Selected text file is empty."
+                                        errorMessage = "Could not extract readable text from '${doc.fileName}'. It may be a scanned image or empty."
                                     )
                                 }
                             } else {
                                 _uiState.update {
                                     it.copy(
-                                        selectedFileName = fileName,
+                                        selectedFileName = doc.fileName,
                                         selectedFileBase64 = null,
-                                        selectedFileText = text,
+                                        selectedFileText = doc.text,
                                         selectedFileMimeType = "text/plain",
                                         isLoading = false,
                                         progressMessage = "",
@@ -245,8 +153,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                     )
                                 }
                             }
+                        },
+                        onFailure = { err ->
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    progressMessage = "",
+                                    errorMessage = "Failed to parse document: ${err.message}"
+                                )
+                            }
                         }
-                    }
+                    )
                 } catch (e: Exception) {
                     _uiState.update {
                         it.copy(
@@ -310,7 +227,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 isLoading = true,
                 errorMessage = null,
-                progressMessage = "Initializing Gemini engine...",
+                progressMessage = "Initializing AI engine...",
                 liveLogs = listOf(startLog)
             )
         }

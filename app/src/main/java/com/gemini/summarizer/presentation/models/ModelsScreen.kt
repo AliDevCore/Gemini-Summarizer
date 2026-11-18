@@ -13,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gemini.summarizer.core.database.entity.ModelEntity
 
@@ -25,7 +24,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Gemini AI Models", fontWeight = FontWeight.Bold) },
+                title = { Text("AI Models", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(
                         onClick = { viewModel.refreshModelsFromApi() },
@@ -34,7 +33,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                         if (uiState.isRefreshing) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Models")
+                            Icon(Icons.Default.Refresh, contentDescription = "Test Connection")
                         }
                     }
                 }
@@ -47,91 +46,44 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                 .padding(padding)
                 .padding(horizontal = 16.dp)
         ) {
-            // Auto Model Priority Toggle Card
+            // Engine Overview Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "Auto Model Priority",
+                            text = "Cloudflare Workers AI",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "Automatically ranks stronger & newer models first (e.g. 3.8 Flash > 3.7 Flash > 3.6 Flash > 3.5 Flash).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = "Active Provider",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
-                    Switch(
-                        checked = uiState.isAutoPriorityEnabled,
-                        onCheckedChange = { viewModel.toggleAutoPriority(it) }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Powered by Google Gemma 4 26B Instruct running serverless on Cloudflare. Supports 256K context window with high-accuracy Persian and multilingual summarization.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-
-            // Quick Selection Controls (Select All / Select None) & Counter
-            val totalModels = uiState.models.size
-            val enabledCount = uiState.models.count { it.isEnabled }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Active: $enabledCount / $totalModels",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilledTonalButton(
-                        onClick = { viewModel.selectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = "Select All",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = { viewModel.deselectAllModels() },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = "Select None",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(12.dp))
 
             // Status or Error Messages
             uiState.statusMessage?.let {
@@ -159,10 +111,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
                 items(uiState.models, key = { it.id }) { model ->
                     ModelCard(
                         model = model,
-                        isAutoPriority = uiState.isAutoPriorityEnabled,
-                        onToggle = { viewModel.toggleModelEnabled(model) },
-                        onMoveUp = { viewModel.moveModelPriority(model, moveUp = true) },
-                        onMoveDown = { viewModel.moveModelPriority(model, moveUp = false) }
+                        onToggle = { viewModel.toggleModelEnabled(model) }
                     )
                 }
                 item { Spacer(Modifier.height(40.dp)) }
@@ -174,10 +123,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel()) {
 @Composable
 fun ModelCard(
     model: ModelEntity,
-    isAutoPriority: Boolean,
-    onToggle: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    onToggle: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -199,7 +145,7 @@ fun ModelCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "#${model.priority} ${model.displayName}",
+                        text = model.displayName,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f, fill = false),
@@ -209,12 +155,12 @@ fun ModelCard(
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (model.isPreview) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                        color = MaterialTheme.colorScheme.secondaryContainer
                     ) {
                         Text(
-                            text = if (model.isPreview) "Preview" else "Stable",
+                            text = "256K Context",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (model.isPreview) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
                             maxLines = 1,
                             softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -222,37 +168,27 @@ fun ModelCard(
                     }
                 }
 
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+                    text = model.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Spacer(Modifier.height(2.dp))
 
                 Text(
                     text = "ID: ${model.id}",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.outline
                 )
-
-                Text(
-                    text = "Context: ${model.inputTokenLimit / 1024}K in | ${model.outputTokenLimit / 1024}K out",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Switch(
-                    checked = model.isEnabled,
-                    onCheckedChange = { onToggle() }
-                )
-                if (!isAutoPriority) {
-                    Row {
-                        IconButton(onClick = onMoveUp, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.ArrowUpward, contentDescription = "Move Up", modifier = Modifier.size(16.dp))
-                        }
-                        IconButton(onClick = onMoveDown, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.ArrowDownward, contentDescription = "Move Down", modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-            }
+            Switch(
+                checked = model.isEnabled,
+                onCheckedChange = { onToggle() }
+            )
         }
     }
 }

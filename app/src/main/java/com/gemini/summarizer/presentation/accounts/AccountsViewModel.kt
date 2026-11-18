@@ -23,6 +23,7 @@ data class ApiKeyDisplayItem(
     val id: Long,
     val accountId: Long,
     val label: String,
+    val projectId: String,
     val maskedKey: String,
     val isActive: Boolean,
     val isInvalid: Boolean,
@@ -61,6 +62,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                             id = k.id,
                             accountId = k.accountId,
                             label = label,
+                            projectId = k.projectId,
                             maskedKey = masked,
                             isActive = k.isActive,
                             isInvalid = k.isInvalid,
@@ -86,10 +88,16 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    fun addDirectApiKey(rawKey: String, customLabel: String?, customProjectId: String? = null) {
+    fun addDirectApiKey(rawKey: String, customLabel: String?, customProjectId: String?) {
         val cleanKey = rawKey.trim()
+        val cleanProjectId = customProjectId?.trim() ?: ""
+
         if (cleanKey.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "API key cannot be empty.") }
+            _uiState.update { it.copy(errorMessage = "Cloudflare API Token cannot be empty.") }
+            return
+        }
+        if (cleanProjectId.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Cloudflare Account ID cannot be empty.") }
             return
         }
 
@@ -103,11 +111,11 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                     val existingKeys = database.apiKeyDao().getKeysForAccount(acc.id)
                     for (k in existingKeys) {
                         val stored = securityManager.getApiKey(k.keyIdentifier)
-                        if (stored != null && stored.trim() == cleanKey) {
+                        if (stored != null && stored.trim() == cleanKey && k.projectId.trim() == cleanProjectId) {
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
-                                    errorMessage = "This API key has already been added as '${acc.name}'."
+                                    errorMessage = "This Cloudflare key and Account ID have already been added as '${acc.name}'."
                                 )
                             }
                             return@launch
@@ -116,7 +124,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 }
 
                 val keyNumber = _uiState.value.keysList.size + 1
-                val label = if (customLabel.isNullOrBlank()) "Key #$keyNumber" else customLabel.trim()
+                val label = if (customLabel.isNullOrBlank()) "Cloudflare Key #$keyNumber" else customLabel.trim()
 
                 // 1. Verify and store the key in encrypted storage first
                 val keyIdentifier = UUID.randomUUID().toString()
@@ -135,12 +143,11 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 )
 
                 // 3. Create ApiKeyEntity associated with the account
-                val assignedProjectId = if (!customProjectId.isNullOrBlank()) customProjectId.trim() else "project-$accountId"
                 database.apiKeyDao().insertApiKey(
                     ApiKeyEntity(
                         accountId = accountId,
                         keyIdentifier = keyIdentifier,
-                        projectId = assignedProjectId,
+                        projectId = cleanProjectId,
                         isActive = true,
                         statusMessage = "Ready"
                     )
@@ -170,24 +177,32 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             val key = database.apiKeyDao().getKeysForAccount(item.accountId).find { it.id == item.id } ?: return@launch
             val raw = securityManager.getApiKey(key.keyIdentifier)
             if (raw.isNullOrBlank()) {
-                database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Key missing in secure storage")
+                database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Token missing in secure storage")
+                return@launch
+            }
+            val accountId = key.projectId.trim()
+            if (accountId.isBlank()) {
+                database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Missing Account ID")
                 return@launch
             }
 
             database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Testing connection...")
 
-            when (val res = apiClient.listModels(raw)) {
+            when (val res = apiClient.testConnection(apiToken = raw, accountId = accountId)) {
                 is GeminiApiResult.Success -> {
-                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Verified (${res.data.size} models)")
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Verified (Active)")
                 }
                 is GeminiApiResult.InvalidKey -> {
-                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Invalid API key")
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Invalid API Token (401/403)")
+                }
+                is GeminiApiResult.ModelUnavailable -> {
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, "Invalid Account ID (404)")
                 }
                 is GeminiApiResult.RateLimited -> {
                     database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Rate limited (429)")
                 }
                 else -> {
-                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = false, "Connection checked")
+                    database.apiKeyDao().setKeyStatus(key.id, isInvalid = true, res.message.ifBlank { "Connection failed" })
                 }
             }
         }
@@ -202,6 +217,10 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun deleteKey(item: ApiKeyDisplayItem) {
+        requestDeleteKey(item)
+    }
+
     fun requestDeleteKey(item: ApiKeyDisplayItem) {
         _uiState.update { it.copy(keyPendingDelete = item) }
     }
@@ -212,22 +231,31 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
 
     fun confirmDeleteKey() {
         val item = _uiState.value.keyPendingDelete ?: return
-        _uiState.update { it.copy(keyPendingDelete = null) }
-
         viewModelScope.launch {
-            val account = database.accountDao().getAccountById(item.accountId)
-            if (account != null) {
-                val keys = database.apiKeyDao().getKeysForAccount(account.id)
-                for (k in keys) {
-                    securityManager.deleteApiKey(k.keyIdentifier)
-                    database.apiKeyDao().deleteApiKey(k)
+            try {
+                // Delete API key from DB and secure storage
+                val key = database.apiKeyDao().getKeysForAccount(item.accountId).find { it.id == item.id }
+                if (key != null) {
+                    securityManager.deleteApiKey(key.keyIdentifier)
+                    database.apiKeyDao().deleteApiKey(key)
                 }
-                database.accountDao().deleteAccount(account)
+                // Delete corresponding account if no other keys remain
+                val remainingKeys = database.apiKeyDao().getKeysForAccount(item.accountId)
+                if (remainingKeys.isEmpty()) {
+                    val account = database.accountDao().getAccountById(item.accountId)
+                    if (account != null) {
+                        database.accountDao().deleteAccount(account)
+                    }
+                }
+                _uiState.update { it.copy(keyPendingDelete = null) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        keyPendingDelete = null,
+                        errorMessage = "Failed to delete key: ${e.message}"
+                    )
+                }
             }
         }
-    }
-
-    fun deleteKey(item: ApiKeyDisplayItem) {
-        requestDeleteKey(item)
     }
 }

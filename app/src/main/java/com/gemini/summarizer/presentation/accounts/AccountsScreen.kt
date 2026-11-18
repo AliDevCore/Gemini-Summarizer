@@ -32,7 +32,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("API Keys & Accounts", fontWeight = FontWeight.Bold) }
+                title = { Text("Cloudflare API Keys", fontWeight = FontWeight.Bold) }
             )
         },
         floatingActionButton = {
@@ -44,7 +44,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                     viewModel.openAddKeyDialog()
                 },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Add API Key", fontWeight = FontWeight.SemiBold) },
+                text = { Text("Add Cloudflare Key", fontWeight = FontWeight.SemiBold) },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary
             )
@@ -92,20 +92,20 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            Icons.Default.Key,
+                            Icons.Default.CloudQueue,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.outline
                         )
                         Spacer(Modifier.height(16.dp))
                         Text(
-                            text = "No API Keys Added Yet",
+                            text = "No Cloudflare Keys Added Yet",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Tap the 'Add API Key' button below to directly paste your Gemini API key from Google AI Studio. You can add multiple keys for automatic rotation.",
+                            text = "Tap the 'Add Cloudflare Key' button below to add your Cloudflare API Token and Account ID. You can add multiple keys for automatic rotation and load balancing.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.outline
                         )
@@ -118,88 +118,96 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                items(uiState.keysList, key = { it.id }) { item ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    items(uiState.keysList, key = { it.id }) { item ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.VpnKey,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.VpnKey,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = item.label,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(Modifier.height(4.dp))
                                     Text(
-                                        text = item.label,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
+                                        text = "Account: ${item.projectId}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = item.maskedKey,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "Status: ${item.statusMessage}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (item.isInvalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
                                     )
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = item.maskedKey,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "Status: ${item.statusMessage}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (item.isInvalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                                )
-                            }
 
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(
-                                    onClick = { viewModel.testApiKey(item) },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Sync,
-                                        contentDescription = "Test Key",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { viewModel.testApiKey(item) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Sync,
+                                            contentDescription = "Test Key",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Switch(
+                                        checked = item.isActive,
+                                        onCheckedChange = { viewModel.toggleKeyActive(item) }
                                     )
-                                }
-                                Switch(
-                                    checked = item.isActive,
-                                    onCheckedChange = { viewModel.toggleKeyActive(item) }
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                IconButton(onClick = { viewModel.deleteKey(item) }) {
-                                    Icon(
-                                        Icons.Default.DeleteOutline,
-                                        contentDescription = "Delete Key",
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(onClick = { viewModel.deleteKey(item) }) {
+                                        Icon(
+                                            Icons.Default.DeleteOutline,
+                                            contentDescription = "Delete Key",
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+                    item { Spacer(Modifier.height(90.dp)) }
                 }
-                item { Spacer(Modifier.height(90.dp)) }
             }
         }
-    }
 
         // Add API Key Dialog
         if (uiState.showAddKeyDialog) {
             AlertDialog(
                 onDismissRequest = { if (!uiState.isLoading) viewModel.dismissAddKeyDialog() },
-                title = { Text("Add Gemini API Key") },
+                title = { Text("Add Cloudflare API Key") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Paste your API Key directly from Google AI Studio:")
+                        Text(
+                            text = "Enter your Cloudflare API Token (with Workers AI permissions) and your Account ID from the Cloudflare Dashboard:",
+                            style = MaterialTheme.typography.bodySmall
+                        )
 
                         uiState.errorMessage?.let { errorMsg ->
                             Card(
@@ -218,15 +226,8 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                         OutlinedTextField(
                             value = inputKey,
                             onValueChange = { inputKey = it },
-                            label = { Text("API Key (e.g. AIzaSy...)") },
-                            singleLine = true,
-                            enabled = !uiState.isLoading,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = inputLabel,
-                            onValueChange = { inputLabel = it },
-                            label = { Text("Label (Optional, e.g. Personal, Work)") },
+                            label = { Text("Cloudflare API Token") },
+                            placeholder = { Text("Bearer token from Cloudflare") },
                             singleLine = true,
                             enabled = !uiState.isLoading,
                             modifier = Modifier.fillMaxWidth()
@@ -234,7 +235,16 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                         OutlinedTextField(
                             value = inputProjectId,
                             onValueChange = { inputProjectId = it },
-                            label = { Text("Project ID (Optional, e.g. my-cloud-project)") },
+                            label = { Text("Cloudflare Account ID (Required)") },
+                            placeholder = { Text("32-character hex ID") },
+                            singleLine = true,
+                            enabled = !uiState.isLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = inputLabel,
+                            onValueChange = { inputLabel = it },
+                            label = { Text("Label (Optional, e.g. Primary Account)") },
                             singleLine = true,
                             enabled = !uiState.isLoading,
                             modifier = Modifier.fillMaxWidth()
@@ -246,7 +256,7 @@ fun AccountsScreen(viewModel: AccountsViewModel = viewModel()) {
                         onClick = {
                             viewModel.addDirectApiKey(inputKey, inputLabel, inputProjectId)
                         },
-                        enabled = inputKey.isNotBlank() && !uiState.isLoading
+                        enabled = inputKey.isNotBlank() && inputProjectId.isNotBlank() && !uiState.isLoading
                     ) {
                         if (uiState.isLoading) {
                             CircularProgressIndicator(

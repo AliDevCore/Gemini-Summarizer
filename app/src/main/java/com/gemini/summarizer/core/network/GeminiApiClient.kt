@@ -1,6 +1,5 @@
 package com.gemini.summarizer.core.network
 
-import com.gemini.summarizer.core.database.entity.ModelFilter
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CancellationException
@@ -43,6 +42,10 @@ data class DiscoveredModel(
 
 class GeminiApiClient {
 
+    companion object {
+        const val DEFAULT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -54,59 +57,49 @@ class GeminiApiClient {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun generateContent(
-        modelId: String,
-        apiKey: String,
+        modelId: String = DEFAULT_MODEL,
+        accountId: String,
+        apiToken: String,
         prompt: String,
-        systemInstruction: String? = null,
-        fileData: GeminiFileData? = null
+        systemInstruction: String? = null
     ): GeminiApiResult<String> = withContext(Dispatchers.IO) {
-        val cleanModel = modelId.removePrefix("models/")
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent"
+        val targetModel = if (modelId.startsWith("@cf/")) modelId else DEFAULT_MODEL
+        val cleanAccountId = accountId.trim()
+        val cleanToken = apiToken.trim()
+
+        if (cleanAccountId.isBlank()) {
+            return@withContext GeminiApiResult.RequestError("Cloudflare Account ID is missing. Please edit your key in Accounts.")
+        }
+        if (cleanToken.isBlank()) {
+            return@withContext GeminiApiResult.InvalidKey("Cloudflare API Token is missing or empty.")
+        }
+
+        val url = "https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/ai/run/$targetModel"
 
         val rootJson = JsonObject()
-        val contentsArray = com.google.gson.JsonArray()
-        val contentObj = JsonObject()
-        val partsArray = com.google.gson.JsonArray()
-
-        // 1. If a binary file (PDF/Image/Text) is attached, add it natively as inlineData
-        if (fileData != null) {
-            val filePart = JsonObject()
-            val inlineDataObj = JsonObject()
-            inlineDataObj.addProperty("mimeType", fileData.mimeType)
-            inlineDataObj.addProperty("data", fileData.base64Data)
-            filePart.add("inlineData", inlineDataObj)
-            partsArray.add(filePart)
-        }
-
-        // 2. Add the text prompt part
-        val textPartObj = JsonObject()
-        textPartObj.addProperty("text", prompt)
-        partsArray.add(textPartObj)
-
-        contentObj.add("parts", partsArray)
-        contentsArray.add(contentObj)
-        rootJson.add("contents", contentsArray)
+        val messagesArray = com.google.gson.JsonArray()
 
         if (!systemInstruction.isNullOrBlank()) {
-            val systemInstructionObj = JsonObject()
-            val sysPartsArray = com.google.gson.JsonArray()
-            val sysPartObj = JsonObject()
-            sysPartObj.addProperty("text", systemInstruction)
-            sysPartsArray.add(sysPartObj)
-            systemInstructionObj.add("parts", sysPartsArray)
-            rootJson.add("systemInstruction", systemInstructionObj)
+            val systemMsg = JsonObject()
+            systemMsg.addProperty("role", "system")
+            systemMsg.addProperty("content", systemInstruction)
+            messagesArray.add(systemMsg)
         }
 
-        val configObj = JsonObject()
-        configObj.addProperty("maxOutputTokens", 32768)
-        rootJson.add("generationConfig", configObj)
+        val userMsg = JsonObject()
+        userMsg.addProperty("role", "user")
+        userMsg.addProperty("content", prompt)
+        messagesArray.add(userMsg)
+
+        rootJson.add("messages", messagesArray)
+        rootJson.addProperty("max_tokens", 4096)
 
         val requestBody = rootJson.toString().toRequestBody(jsonMediaType)
         val request = Request.Builder()
             .url(url)
             .post(requestBody)
             .header("Content-Type", "application/json")
-            .header("x-goog-api-key", apiKey.trim())
+            .header("Authorization", "Bearer $cleanToken")
             .build()
 
         try {
@@ -117,68 +110,51 @@ class GeminiApiClient {
                 when (code) {
                     200 -> {
                         val parsed = gson.fromJson(responseBody, JsonObject::class.java)
-                        val candidates = parsed.getAsJsonArray("candidates")
-                        if (candidates != null && candidates.size() > 0) {
-                            val firstCandidate = candidates[0].asJsonObject
-                            val finishReason = firstCandidate.get("finishReason")?.asString
-                            val content = firstCandidate.getAsJsonObject("content")
-                            val parts = content?.getAsJsonArray("parts")
-                            if (parts != null && parts.size() > 0) {
-                                val fullText = StringBuilder()
-                                for (p in parts) {
-                                    val partObj = p.asJsonObject
-                                    val isThought = partObj.get("thought")?.asBoolean ?: false
-                                    if (!isThought && partObj.has("text")) {
-                                        fullText.append(partObj.get("text").asString)
-                                    }
+                        val success = parsed.get("success")?.asBoolean ?: true
+                        if (success && parsed.has("result") && !parsed.get("result").isJsonNull) {
+                            val resultElem = parsed.get("result")
+                            val textResult = when {
+                                resultElem.isJsonObject && resultElem.asJsonObject.has("response") -> {
+                                    resultElem.asJsonObject.get("response")?.asString ?: ""
                                 }
-                                val textResult = fullText.toString().trim()
-                                if (textResult.isNotEmpty()) {
-                                    if (finishReason == "MAX_TOKENS") {
-                                        return@withContext GeminiApiResult.Success(
-                                            "$textResult\n\n[Notice: Generation reached maximum token limit (MAX_TOKENS) and may be truncated.]"
-                                        )
-                                    }
-                                    return@withContext GeminiApiResult.Success(textResult)
+                                resultElem.isJsonObject && resultElem.asJsonObject.has("choices") -> {
+                                    val choices = resultElem.asJsonObject.getAsJsonArray("choices")
+                                    if (choices != null && choices.size() > 0) {
+                                        choices[0].asJsonObject.getAsJsonObject("message")?.get("content")?.asString ?: ""
+                                    } else ""
                                 }
+                                resultElem.isJsonPrimitive -> resultElem.asString
+                                else -> resultElem.toString()
                             }
-                            if (finishReason == "SAFETY") {
-                                return@withContext GeminiApiResult.RequestError("Content blocked by Google Safety Filters.")
+
+                            if (textResult.isNotBlank()) {
+                                return@withContext GeminiApiResult.Success(textResult.trim())
                             }
                         }
-                        return@withContext GeminiApiResult.RequestError("Empty response returned from model")
+                        val errorMsg = parseErrorMessage(responseBody) ?: "Empty or unrecognized response structure from Cloudflare Workers AI"
+                        return@withContext GeminiApiResult.RequestError(errorMsg)
+                    }
+                    401, 403 -> {
+                        val errorMessage = parseErrorMessage(responseBody)
+                            ?: "Cloudflare API Token is invalid or unauthorized (HTTP $code). Verify Workers AI permissions."
+                        return@withContext GeminiApiResult.InvalidKey(errorMessage)
                     }
                     404 -> {
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Model not found or retired (HTTP 404)"
+                        val errorMessage = parseErrorMessage(responseBody)
+                            ?: "Cloudflare Account ID ($cleanAccountId) or model '$targetModel' not found (HTTP 404)."
                         return@withContext GeminiApiResult.ModelUnavailable(errorMessage)
                     }
                     429 -> {
                         val retryAfterHeader = response.header("Retry-After")?.toLongOrNull()
-                        val retryDelayFromBody = parseRetryDelay(responseBody)
-                        val effectiveCooldown = retryAfterHeader ?: retryDelayFromBody
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Rate limit or quota exceeded (HTTP 429)"
-                        return@withContext GeminiApiResult.RateLimited(errorMessage, effectiveCooldown)
-                    }
-                    401, 403 -> {
-                        val errorMessage = parseErrorMessage(responseBody) ?: "API Key is invalid or unauthorized"
-                        return@withContext GeminiApiResult.InvalidKey(errorMessage)
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Cloudflare rate limit or quota exceeded (HTTP 429)"
+                        return@withContext GeminiApiResult.RateLimited(errorMessage, retryAfterHeader ?: 60L)
                     }
                     500, 502, 503, 504 -> {
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Google service temporary error (HTTP $code)"
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Cloudflare temporary service error (HTTP $code)"
                         return@withContext GeminiApiResult.TransientError(errorMessage, code)
                     }
                     else -> {
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Request error (HTTP $code)"
-                        if (errorMessage.contains("User location is not supported", ignoreCase = true) ||
-                            errorMessage.contains("location is not supported", ignoreCase = true)) {
-                            return@withContext GeminiApiResult.RequestError("Google Gemini is not supported in your current IP/region. Please connect to a VPN/proxy.")
-                        }
-                        if (errorMessage.contains("no longer available", ignoreCase = true) ||
-                            errorMessage.contains("not found", ignoreCase = true) ||
-                            errorMessage.contains("update your code to use", ignoreCase = true)
-                        ) {
-                            return@withContext GeminiApiResult.ModelUnavailable(errorMessage)
-                        }
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Cloudflare request error (HTTP $code)"
                         return@withContext GeminiApiResult.RequestError(errorMessage)
                     }
                 }
@@ -189,6 +165,73 @@ class GeminiApiClient {
             return@withContext GeminiApiResult.TransientError("Network error: ${e.localizedMessage ?: "Connection failed"}")
         } catch (e: Exception) {
             return@withContext GeminiApiResult.RequestError("Unexpected error: ${e.localizedMessage ?: "Unknown"}")
+        }
+    }
+
+    suspend fun generateContent(
+        modelId: String,
+        apiKey: String,
+        prompt: String,
+        systemInstruction: String? = null,
+        fileData: GeminiFileData? = null
+    ): GeminiApiResult<String> {
+        val parts = apiKey.split(":", limit = 2)
+        val (accountId, token) = if (parts.size == 2) {
+            parts[0] to parts[1]
+        } else {
+            "" to apiKey
+        }
+        return generateContent(
+            modelId = modelId,
+            accountId = accountId,
+            apiToken = token,
+            prompt = prompt,
+            systemInstruction = systemInstruction
+        )
+    }
+
+    suspend fun testConnection(apiToken: String, accountId: String): GeminiApiResult<Boolean> = withContext(Dispatchers.IO) {
+        val cleanAccountId = accountId.trim()
+        val cleanToken = apiToken.trim()
+
+        if (cleanAccountId.isBlank()) {
+            return@withContext GeminiApiResult.RequestError("Cloudflare Account ID is required.")
+        }
+        if (cleanToken.isBlank()) {
+            return@withContext GeminiApiResult.InvalidKey("Cloudflare API Token is required.")
+        }
+
+        val url = "https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/ai/run/$DEFAULT_MODEL"
+        val rootJson = JsonObject()
+        val messagesArray = com.google.gson.JsonArray()
+        val userMsg = JsonObject()
+        userMsg.addProperty("role", "user")
+        userMsg.addProperty("content", "Hi")
+        messagesArray.add(userMsg)
+        rootJson.add("messages", messagesArray)
+        rootJson.addProperty("max_tokens", 5)
+
+        val requestBody = rootJson.toString().toRequestBody(jsonMediaType)
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer $cleanToken")
+            .build()
+
+        try {
+            executeCancellable(request).use { response ->
+                val body = response.body?.string() ?: ""
+                when (response.code) {
+                    200 -> GeminiApiResult.Success(true)
+                    401, 403 -> GeminiApiResult.InvalidKey(parseErrorMessage(body) ?: "Invalid Cloudflare API Token or permission denied")
+                    404 -> GeminiApiResult.ModelUnavailable(parseErrorMessage(body) ?: "Cloudflare Account ID not found (404)")
+                    429 -> GeminiApiResult.RateLimited(parseErrorMessage(body) ?: "Rate limit reached (429)")
+                    else -> GeminiApiResult.RequestError(parseErrorMessage(body) ?: "HTTP ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            GeminiApiResult.TransientError("Connection failed: ${e.localizedMessage}")
         }
     }
 
@@ -212,90 +255,42 @@ class GeminiApiClient {
         }
 
     suspend fun listModels(apiKey: String): GeminiApiResult<List<DiscoveredModel>> = withContext(Dispatchers.IO) {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models"
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("x-goog-api-key", apiKey.trim())
-            .build()
-
-        try {
-            executeCancellable(request).use { response ->
-                val body = response.body?.string() ?: ""
-                if (response.code == 200) {
-                    val root = gson.fromJson(body, JsonObject::class.java)
-                    val modelsArray = root.getAsJsonArray("models") ?: return@withContext GeminiApiResult.Success(emptyList())
-                    val result = mutableListOf<DiscoveredModel>()
-
-                    for (elem in modelsArray) {
-                        val mObj = elem.asJsonObject
-                        val rawName = mObj.get("name")?.asString ?: ""
-                        val cleanId = rawName.removePrefix("models/").trim().lowercase()
-                        val displayName = mObj.get("displayName")?.asString ?: cleanId
-                        val description = mObj.get("description")?.asString ?: ""
-                        val inputTokenLimit = mObj.get("inputTokenLimit")?.asInt ?: 32768
-                        val outputTokenLimit = mObj.get("outputTokenLimit")?.asInt ?: 4096
-                        val methods = mObj.getAsJsonArray("supportedGenerationMethods")
-
-                        var supportsText = false
-                        if (methods != null) {
-                            for (method in methods) {
-                                if (method.asString == "generateContent") {
-                                    supportsText = true
-                                    break
-                                }
-                            }
-                        }
-
-                        if (supportsText && ModelFilter.isAllowedTextModel(cleanId, displayName)) {
-                            result.add(
-                                DiscoveredModel(
-                                    id = cleanId,
-                                    displayName = displayName,
-                                    description = description,
-                                    inputTokenLimit = inputTokenLimit,
-                                    outputTokenLimit = outputTokenLimit,
-                                    supportsTextGeneration = true
-                                )
-                            )
-                        }
-                    }
-                    return@withContext GeminiApiResult.Success(result)
-                } else if (response.code == 401 || response.code == 403) {
-                    return@withContext GeminiApiResult.InvalidKey("Invalid API Key when listing models")
-                } else if (response.code == 429) {
-                    return@withContext GeminiApiResult.RateLimited("Rate limit hit during list models")
-                } else {
-                    return@withContext GeminiApiResult.TransientError("Failed to list models (HTTP ${response.code})")
-                }
-            }
-        } catch (e: Exception) {
-            return@withContext GeminiApiResult.TransientError("Network error listing models: ${e.localizedMessage}")
-        }
+        val singleModel = DiscoveredModel(
+            id = DEFAULT_MODEL,
+            displayName = "Gemma 4 26B (Cloudflare)",
+            description = "Google Gemma 4 26B Instruct on Cloudflare Workers AI with 256K Context Window",
+            inputTokenLimit = 262144,
+            outputTokenLimit = 4096,
+            supportsTextGeneration = true
+        )
+        GeminiApiResult.Success(listOf(singleModel))
     }
 
     private fun parseErrorMessage(jsonBody: String): String? {
         return try {
             val root = gson.fromJson(jsonBody, JsonObject::class.java)
-            val errorObj = root.getAsJsonObject("error")
-            errorObj?.get("message")?.asString
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun parseRetryDelay(jsonBody: String): Long? {
-        return try {
-            val root = gson.fromJson(jsonBody, JsonObject::class.java)
-            val error = root.getAsJsonObject("error") ?: return null
-            val details = error.getAsJsonArray("details") ?: return null
-            for (detail in details) {
-                val obj = detail.asJsonObject
-                if (obj.has("retryDelay")) {
-                    val raw = obj.get("retryDelay").asString
-                    val clean = raw.removeSuffix("s").trim()
-                    return clean.toDoubleOrNull()?.toLong()
+            if (root.has("errors") && root.get("errors").isJsonArray) {
+                val errors = root.getAsJsonArray("errors")
+                if (errors.size() > 0) {
+                    val firstErr = errors[0]
+                    if (firstErr.isJsonObject && firstErr.asJsonObject.has("message")) {
+                        return firstErr.asJsonObject.get("message").asString
+                    } else if (firstErr.isJsonPrimitive) {
+                        return firstErr.asString
+                    }
                 }
+            }
+            if (root.has("error")) {
+                val err = root.get("error")
+                if (err.isJsonObject && err.asJsonObject.has("message")) {
+                    return err.asJsonObject.get("message").asString
+                } else if (err.isJsonPrimitive) {
+                    return err.asString
+                }
+            }
+            if (root.has("messages") && root.get("messages").isJsonArray) {
+                val msgs = root.getAsJsonArray("messages")
+                if (msgs.size() > 0) return msgs[0].asString
             }
             null
         } catch (_: Exception) {
