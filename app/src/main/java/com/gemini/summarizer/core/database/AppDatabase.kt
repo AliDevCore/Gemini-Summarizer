@@ -80,14 +80,50 @@ abstract class AppDatabase : RoomDatabase() {
             return listOf(
                 ModelEntity(
                     id = "@cf/google/gemma-4-26b-a4b-it",
-                    displayName = "Gemma 4 26B (Cloudflare)",
-                    description = "Google Gemma 4 26B Instruct on Cloudflare Workers AI with 256K Context Window",
+                    displayName = "Gemma 4 26B (⚡ Ultra-Fast • Best Persian)",
+                    description = "Google Gemma 4 26B Instruct on Cloudflare. 256K Context Window, top cinematic Persian fluency.",
                     inputTokenLimit = 262144,
                     outputTokenLimit = 4096,
                     isPreview = false,
                     isStable = true,
                     supportsTextGeneration = true,
                     priority = 1,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "@cf/qwen/qwen3.8-27b",
+                    displayName = "Qwen 3.8 27B (⚡ High Accuracy • Deep Reasoning)",
+                    description = "Alibaba Qwen 3.8 27B on Cloudflare. 262K Context Window, advanced multilingual reasoning and idiom understanding.",
+                    inputTokenLimit = 262144,
+                    outputTokenLimit = 4096,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 2,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "@cf/openai/gpt-oss-120b",
+                    displayName = "GPT-OSS 120B (⚡ Flagship MoE • Analytical Depth)",
+                    description = "OpenAI 117B MoE Flagship Architecture on Cloudflare. 128K Context Window, heavy analytical synthesis.",
+                    inputTokenLimit = 131072,
+                    outputTokenLimit = 4096,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 3,
+                    isEnabled = true
+                ),
+                ModelEntity(
+                    id = "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                    displayName = "Llama 3.3 70B Fast (⚡ High Speed • FP8 Edge)",
+                    description = "Meta Llama 3.3 70B FP8 Edge on Cloudflare. 128K Context Window, quantized rapid edge execution.",
+                    inputTokenLimit = 131072,
+                    outputTokenLimit = 4096,
+                    isPreview = false,
+                    isStable = true,
+                    supportsTextGeneration = true,
+                    priority = 4,
                     isEnabled = true
                 )
             )

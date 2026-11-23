@@ -2,10 +2,17 @@ name: Build and Auto-Release APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (optional, defaults to auto-incremented v1.0.X)'
+        required: false
+        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,6 +45,45 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Determine Next Version and Tag
+        id: tag_generator
+        run: |
+          manual_tag="${{ inputs.tag_name }}"
+          if [ -n "$manual_tag" ]; then
+            TAG_NAME="$manual_tag"
+            VERSION_CODE=100
+            VERSION_NAME="${TAG_NAME#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+            VERSION_CODE=100
+            VERSION_NAME="${TAG_NAME#v}"
+          else
+            git fetch --tags --force || true
+            highest_patch=0
+            for t in $(git tag -l "v1.0.*"); do
+              if [[ $t =~ ^v1\.0\.([0-9]+)$ ]]; then
+                num="${BASH_REMATCH[1]}"
+                if [ "$num" -gt "$highest_patch" ]; then
+                  highest_patch=$num
+                fi
+              fi
+            done
+            run_num="${{ github.run_number }}"
+            next_patch=$(( highest_patch + 1 ))
+            if [ "$run_num" -gt "$next_patch" ]; then
+              next_patch=$run_num
+            fi
+            TAG_NAME="v1.0.$next_patch"
+            VERSION_CODE=$next_patch
+            VERSION_NAME="1.0.$next_patch"
+          fi
+          echo "Target Tag: $TAG_NAME"
+          echo "Version Name: $VERSION_NAME"
+          echo "Version Code: $VERSION_CODE"
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+
       - name: Run Unit Tests
         run: ./gradlew test --stacktrace
 
@@ -50,7 +96,7 @@ jobs:
           elif [ -f "keystore/release.jks" ]; then
             echo "Release keystore found in repository."
           else
-            echo "Warning: No release keystore found."
+            echo "Warning: No release keystore found, falling back to debug signing."
           fi
 
       - name: Build Release APK
@@ -58,21 +104,11 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'gemini_summarizer_secure_keystore_2026' }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'gemini_key' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'gemini_summarizer_secure_keystore_2026' }}
-        run: ./gradlew assembleRelease -PVERSION_CODE=${{ github.run_number }} -PVERSION_NAME="1.0.${{ github.run_number }}" --stacktrace
-
-      - name: Determine Release Tag
-        id: tag_generator
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG_NAME="${{ github.ref_name }}"
-          else
-            TAG_NAME="v1.0.${{ github.run_number }}"
-            git config --global user.name "github-actions[bot]"
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git tag $TAG_NAME
-            git push origin $TAG_NAME || echo "Tag already exists or push skipped"
-          fi
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          ./gradlew assembleRelease \
+            -PVERSION_CODE=${{ steps.tag_generator.outputs.VERSION_CODE }} \
+            -PVERSION_NAME="${{ steps.tag_generator.outputs.VERSION_NAME }}" \
+            --stacktrace
 
       - name: Prepare Release APK Artifact
         run: |
@@ -92,20 +128,31 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_generator.outputs.TAG_NAME }}
-          name: "Release ${{ steps.tag_generator.outputs.TAG_NAME }}"
+          name: "Gemini Summarizer ${{ steps.tag_generator.outputs.TAG_NAME }}"
+          generate_release_notes: true
           body: |
-            ### 🚀 Gemini Summarizer Official Release
+            ### 🚀 Gemini Summarizer Official Release (${{ steps.tag_generator.outputs.TAG_NAME }})
             
             - **Release Tag:** `${{ steps.tag_generator.outputs.TAG_NAME }}`
-            - **Version Code:** `${{ github.run_number }}`
+            - **Version Code:** `${{ steps.tag_generator.outputs.VERSION_CODE }}`
             - **Asset:** Standalone signed Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
             
-            #### Highlights:
-            - **Robust Architecture:** Complete hardening across API ingestion, Jsoup web scraper, and multi-page export.
-            - **Persistent Signature:** Signed with the official project release certificate for seamless in-place updates.
-            - **Updated Models:** Gemini 3.1 Pro Preview, Gemini 3 Flash Preview, Gemini 3.8 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite.
-            - **Direct API Keys:** Streamlined direct API key pool management.
-            - **Refined Material 3 UI:** Fixed text wrapping, button clipping, and per-paragraph RTL rendering.
+            #### ✨ Highlights & New Features:
+            - **Context-Preserving Hierarchical Summarization:**
+              - Seamless long-document summarization with rolling context memory and semantic chunk overlap.
+              - Eliminates Cloudflare Workers AI edge payload limits and `Input sequence too long` errors.
+              - Holistic multi-stage synthesis guarantees logical continuity, executive clarity, and complete narrative cohesion.
+            - **4 Verified Cloudflare Workers AI Models:**
+              1. `Google Gemma 4 26B` (⚡ Ultra-Fast • Cinematic Persian Fluency)
+              2. `Alibaba Qwen 3.8 27B` (⚡ High Accuracy • Deep Multilingual Reasoning)
+              3. `OpenAI GPT-OSS 120B` (⚡ Flagship MoE • Analytical Depth)
+              4. `Meta Llama 3.3 70B Fast` (⚡ High Speed • FP8 Edge Accelerated)
+            - **Intelligent Dual-Tier Auto-Rotation:**
+              - Automatic failover across prioritized models and configured API keys.
+            - **AI Models Priority Management:**
+              - Reorder model priority order with arrow controls or toggle models on/off directly from the Models screen.
+            - **Persistent Official Signature:**
+              - Built and signed with the official project release certificate for seamless in-place updates.
           files: |
             release-artifacts/*.apk
             release-artifacts/checksums.sha256

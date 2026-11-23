@@ -18,9 +18,12 @@ class HierarchicalSummarizer(
 ) {
 
     companion object {
-        // Gemini models have 1M+ token context windows. Support large single-pass inputs (up to 30,000 words)
-        // without premature fragmentation, retaining full context and reducing quota burn.
-        private const val MAX_WORDS_PER_CHUNK = 30000
+        // Optimized for Cloudflare Workers AI edge model context & latency budgets.
+        // Single pass for documents up to 3,500 words (~10-14 standard pages).
+        // Larger documents transition seamlessly into rolling-context hierarchical summarization.
+        const val MAX_WORDS_PER_CHUNK = 3500
+        const val CHUNK_OVERLAP_WORDS = 250
+        const val MAX_SYNTHESIS_INPUT_WORDS = 4000
     }
 
     suspend fun summarizeFile(
@@ -38,7 +41,7 @@ class HierarchicalSummarizer(
             Please read and comprehensively summarize the attached document following the formatting and style rules.$customNotes
         """.trimIndent()
 
-        onProgressUpdate("Transmitting document to Gemini multimodal engine...")
+        onProgressUpdate("Transmitting document to AI engine...")
 
         val rotationResult = rotationEngine.executeWithAutoRotation(
             prompt = prompt,
@@ -56,7 +59,7 @@ class HierarchicalSummarizer(
                         modelUsed = rotationResult.modelUsed,
                         accountUsed = rotationResult.accountName,
                         projectId = rotationResult.projectId,
-                        inputWords = 0, // Multimodal document
+                        inputWords = 0,
                         outputWords = outWords,
                         stepsCount = 1
                     )
@@ -81,14 +84,14 @@ class HierarchicalSummarizer(
         val inputWordCount = inputWordList.size
         val systemInstruction = config.buildSystemInstruction()
 
-        // Single pass if within chunk threshold
+        // 1. Single pass for texts within the safe Cloudflare edge window
         if (inputWordCount <= MAX_WORDS_PER_CHUNK) {
-            onProgressUpdate("Executing single-pass summarization...")
+            onProgressUpdate("Executing single-pass comprehensive summarization...")
             val prompt = """
                 Source text:
                 $trimmed
                 
-                Please summarize the above text according to instructions.
+                Please produce a comprehensive, beautifully structured, and cohesive summary of the text above following the specified instructions. Preserve all critical arguments, key facts, data points, and takeaways with clear sectioning.
             """.trimIndent()
 
             return when (val rotationResult = rotationEngine.executeWithAutoRotation(prompt, systemInstruction, null, onProgressUpdate)) {
@@ -111,44 +114,110 @@ class HierarchicalSummarizer(
             }
         }
 
-        // Multi-stage hierarchical summarization
-        val chunks = splitTextIntoChunks(trimmed, MAX_WORDS_PER_CHUNK)
+        // 2. Multi-stage hierarchical summarization with rolling context & semantic overlap
+        val chunks = splitTextIntoSemanticChunks(trimmed, MAX_WORDS_PER_CHUNK, CHUNK_OVERLAP_WORDS)
         val intermediateSummaries = mutableListOf<String>()
+        var rollingContext = ""
         var lastModelUsed = ""
         var lastAccountUsed = ""
         var lastProjectId = ""
 
         for ((index, chunk) in chunks.withIndex()) {
-            onProgressUpdate("Summarizing section ${index + 1} of ${chunks.size}...")
-            val sectionPrompt = """
-                Section ${index + 1} of ${chunks.size}:
+            val sectionNum = index + 1
+            val totalSections = chunks.size
+            onProgressUpdate("Analyzing section $sectionNum of $totalSections with contextual continuity...")
+
+            val sectionPrompt = if (rollingContext.isBlank()) {
+                """
+                Section $sectionNum of $totalSections (Initial Section):
+                
                 $chunk
                 
                 Extract all essential arguments, critical facts, data points, and context from this section.
-            """.trimIndent()
+                Highlight key themes and conclusions clearly.
+                """.trimIndent()
+            } else {
+                """
+                Section $sectionNum of $totalSections:
+                
+                [Preceding Context / پیش‌زمینه و خلاصه بخش‌های پیشین]:
+                $rollingContext
+                
+                [Current Section Content / متن بخش فعلی]:
+                $chunk
+                
+                Analyze and summarize this current section in direct continuity with the preceding context.
+                Detail how this section advances the earlier arguments, identify new data points or conclusions, and maintain the narrative thread.
+                """.trimIndent()
+            }
 
             val chunkResult = rotationEngine.executeWithAutoRotation(sectionPrompt, systemInstruction, null, onProgressUpdate)
             when (chunkResult) {
                 is RotationExecutionResult.Success -> {
-                    intermediateSummaries.add("--- Section ${index + 1} Summary ---\n" + chunkResult.outputText)
+                    val sectionSummary = chunkResult.outputText.trim()
+                    intermediateSummaries.add("### Section $sectionNum Summary\n$sectionSummary")
                     lastModelUsed = chunkResult.modelUsed
                     lastAccountUsed = chunkResult.accountName
                     lastProjectId = chunkResult.projectId
+
+                    // Update rolling context for subsequent chunks (condensed to ~150-200 words to avoid token bloat)
+                    rollingContext = extractKeyTakeaways(sectionSummary, maxWords = 180)
                 }
                 is RotationExecutionResult.AllExhausted -> return Result.failure(Exception(chunkResult.message))
                 is RotationExecutionResult.Failure -> return Result.failure(Exception(chunkResult.message))
             }
         }
 
-        // Final hierarchical synthesis
-        onProgressUpdate("Synthesizing final comprehensive summary from all sections...")
-        val combinedSections = intermediateSummaries.joinToString("\n\n")
+        // 3. Recursive reduction if intermediate summaries exceed the synthesis limit
+        var workingSummaries = intermediateSummaries
+        var reductionStage = 1
+        while (countWordsInList(workingSummaries) > MAX_SYNTHESIS_INPUT_WORDS && workingSummaries.size > 2) {
+            onProgressUpdate("Condensing intermediate sections (Stage $reductionStage reduction)...")
+            val condensedList = mutableListOf<String>()
+            val groupedChunks = workingSummaries.chunked(3)
+
+            for ((grpIdx, group) in groupedChunks.withIndex()) {
+                val groupText = group.joinToString("\n\n")
+                val groupPrompt = """
+                    Consolidate and condense the following sequential section summaries into a concise, unified thematic summary:
+                    
+                    $groupText
+                    
+                    Preserve all crucial facts, progression of ideas, and core conclusions without redundancy.
+                """.trimIndent()
+
+                when (val grpResult = rotationEngine.executeWithAutoRotation(groupPrompt, systemInstruction, null, onProgressUpdate)) {
+                    is RotationExecutionResult.Success -> {
+                        condensedList.add("### Thematic Block ${grpIdx + 1}\n${grpResult.outputText.trim()}")
+                        lastModelUsed = grpResult.modelUsed
+                    }
+                    is RotationExecutionResult.AllExhausted -> return Result.failure(Exception(grpResult.message))
+                    is RotationExecutionResult.Failure -> return Result.failure(Exception(grpResult.message))
+                }
+            }
+            workingSummaries = condensedList
+            reductionStage++
+        }
+
+        // 4. Final Holistic Synthesis
+        onProgressUpdate("Synthesizing unified, seamless final summary from all sections...")
+        val combinedSections = workingSummaries.joinToString("\n\n")
         val finalSynthesisPrompt = """
-            Below are structured summaries of all consecutive sections from a large document:
+            Below are structured, chronological summaries covering all consecutive parts of a comprehensive document:
             
             $combinedSections
             
-            Synthesize these section summaries into one cohesive, beautifully organized, comprehensive final summary that captures the full narrative, all critical data, and key conclusions without repetition.
+            Synthesize these into one cohesive, beautifully organized, and flowing comprehensive final summary.
+            
+            CRITICAL REQUIREMENTS:
+            1. Maintain an unbroken logical thread (نخ تسبیح و پیوستگی یکپارچه) from introduction, through structured deep analysis, to final conclusions.
+            2. Do NOT simply concatenate section bullet points. Eliminate cross-section redundancies, resolve narrative references, and produce a harmonious reading flow.
+            3. Structure with clear Markdown headers:
+               - Executive Overview / پیام اصلی و خلاصه اجرایی
+               - Core Analysis & Detailed Insights / تحلیل جامع بخش‌ها و استدلال‌های کلیدی
+               - Evidence, Data & Specific Findings / شواهد، داده‌ها و مصادیق مهم
+               - Final Takeaways & Synthesis / جمع‌بندی راهبردی و نتیجه‌گیری پایانی
+            4. Strictly adhere to the requested language and tone throughout.
         """.trimIndent()
 
         return when (val finalResult = rotationEngine.executeWithAutoRotation(finalSynthesisPrompt, systemInstruction, null, onProgressUpdate)) {
@@ -162,7 +231,7 @@ class HierarchicalSummarizer(
                         projectId = finalResult.projectId,
                         inputWords = inputWordCount,
                         outputWords = outWords,
-                        stepsCount = chunks.size + 1
+                        stepsCount = chunks.size + reductionStage
                     )
                 )
             }
@@ -171,40 +240,89 @@ class HierarchicalSummarizer(
         }
     }
 
-    private fun splitTextIntoChunks(text: String, maxWordsPerChunk: Int): List<String> {
-        val paragraphs = text.split("\n\n")
+    private fun extractKeyTakeaways(text: String, maxWords: Int): String {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val sb = StringBuilder()
+        var words = 0
+
+        for (line in lines) {
+            val lineWords = line.split("\\s+".toRegex()).size
+            if (words + lineWords > maxWords && sb.isNotEmpty()) break
+            sb.append(line).append("\n")
+            words += lineWords
+        }
+        return sb.toString().trim()
+    }
+
+    private fun countWordsInList(items: List<String>): Int {
+        return items.sumOf { it.split("\\s+".toRegex()).size }
+    }
+
+    /**
+     * Splits text into semantic chunks respecting paragraphs and headings,
+     * while maintaining an overlap buffer between consecutive chunks.
+     */
+    private fun splitTextIntoSemanticChunks(
+        text: String,
+        maxWordsPerChunk: Int,
+        overlapWords: Int
+    ): List<String> {
+        val paragraphs = text.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }
+        if (paragraphs.isEmpty()) return listOf(text)
+
         val chunks = mutableListOf<String>()
-        var currentChunk = StringBuilder()
+        var currentChunkParas = mutableListOf<String>()
         var currentWords = 0
 
         for (paragraph in paragraphs) {
-            val pWords = paragraph.trim().split("\\s+".toRegex()).size
-            if (currentWords + pWords > maxWordsPerChunk && currentChunk.isNotEmpty()) {
-                chunks.add(currentChunk.toString().trim())
-                currentChunk = StringBuilder()
-                currentWords = 0
+            val pWords = paragraph.split("\\s+".toRegex()).size
+
+            // If adding this paragraph exceeds chunk size and we already have content
+            if (currentWords + pWords > maxWordsPerChunk && currentChunkParas.isNotEmpty()) {
+                val chunkContent = currentChunkParas.joinToString("\n\n")
+                chunks.add(chunkContent)
+
+                // Compute overlap paragraphs from the tail of current chunk
+                val overlapParas = mutableListOf<String>()
+                var collectedOverlapWords = 0
+                for (para in currentChunkParas.reversed()) {
+                    val wordsInPara = para.split("\\s+".toRegex()).size
+                    if (collectedOverlapWords + wordsInPara <= overlapWords || overlapParas.isEmpty()) {
+                        overlapParas.add(0, para)
+                        collectedOverlapWords += wordsInPara
+                    } else {
+                        break
+                    }
+                }
+
+                currentChunkParas = overlapParas.toMutableList()
+                currentWords = collectedOverlapWords
             }
 
+            // If a single paragraph is exceptionally huge, split it on sentence boundaries
             if (pWords > maxWordsPerChunk) {
                 val sentences = paragraph.split(Regex("(?<=[.!?\\n])\\s+"))
                 for (sentence in sentences) {
-                    val sWords = sentence.trim().split("\\s+".toRegex()).size
-                    if (currentWords + sWords > maxWordsPerChunk && currentChunk.isNotEmpty()) {
-                        chunks.add(currentChunk.toString().trim())
-                        currentChunk = StringBuilder()
+                    val sWords = sentence.split("\\s+".toRegex()).size
+                    if (currentWords + sWords > maxWordsPerChunk && currentChunkParas.isNotEmpty()) {
+                        chunks.add(currentChunkParas.joinToString("\n\n"))
+                        currentChunkParas = mutableListOf()
                         currentWords = 0
                     }
-                    currentChunk.append(sentence).append(" ")
+                    currentChunkParas.add(sentence)
                     currentWords += sWords
                 }
             } else {
-                currentChunk.append(paragraph).append("\n\n")
+                currentChunkParas.add(paragraph)
                 currentWords += pWords
             }
         }
 
-        if (currentChunk.isNotBlank()) {
-            chunks.add(currentChunk.toString().trim())
+        if (currentChunkParas.isNotEmpty()) {
+            val lastChunk = currentChunkParas.joinToString("\n\n").trim()
+            if (lastChunk.isNotBlank()) {
+                chunks.add(lastChunk)
+            }
         }
 
         return if (chunks.isEmpty()) listOf(text) else chunks

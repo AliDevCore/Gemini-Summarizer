@@ -147,7 +147,7 @@ class GeminiApiClient {
                     }
                     429 -> {
                         val retryAfterHeader = response.header("Retry-After")?.toLongOrNull()
-                        val errorMessage = parseErrorMessage(responseBody) ?: "Cloudflare rate limit or quota exceeded (HTTP 429)"
+                        val errorMessage = parseErrorMessage(responseBody) ?: "Cloudflare rate limit or daily quota reached (HTTP 429)"
                         return@withContext GeminiApiResult.RateLimited(errorMessage, retryAfterHeader ?: 60L)
                     }
                     500, 502, 503, 504 -> {
@@ -191,9 +191,10 @@ class GeminiApiClient {
         )
     }
 
-    suspend fun testConnection(apiToken: String, accountId: String): GeminiApiResult<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun testConnection(apiToken: String, accountId: String, modelId: String = DEFAULT_MODEL): GeminiApiResult<Boolean> = withContext(Dispatchers.IO) {
         val cleanAccountId = accountId.trim()
         val cleanToken = apiToken.trim()
+        val targetModel = if (modelId.startsWith("@cf/")) modelId else DEFAULT_MODEL
 
         if (cleanAccountId.isBlank()) {
             return@withContext GeminiApiResult.RequestError("Cloudflare Account ID is required.")
@@ -202,7 +203,7 @@ class GeminiApiClient {
             return@withContext GeminiApiResult.InvalidKey("Cloudflare API Token is required.")
         }
 
-        val url = "https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/ai/run/$DEFAULT_MODEL"
+        val url = "https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/ai/run/$targetModel"
         val rootJson = JsonObject()
         val messagesArray = com.google.gson.JsonArray()
         val userMsg = JsonObject()
@@ -256,15 +257,41 @@ class GeminiApiClient {
         }
 
     suspend fun listModels(apiKey: String): GeminiApiResult<List<DiscoveredModel>> = withContext(Dispatchers.IO) {
-        val singleModel = DiscoveredModel(
-            id = DEFAULT_MODEL,
-            displayName = "Gemma 4 26B (Cloudflare)",
-            description = "Google Gemma 4 26B Instruct on Cloudflare Workers AI with 256K Context Window",
-            inputTokenLimit = 262144,
-            outputTokenLimit = 4096,
-            supportsTextGeneration = true
+        val models = listOf(
+            DiscoveredModel(
+                id = "@cf/google/gemma-4-26b-a4b-it",
+                displayName = "Gemma 4 26B (⚡ Ultra-Fast • Best Persian)",
+                description = "Google Gemma 4 26B Instruct on Cloudflare. 256K Context Window, top Persian fluency.",
+                inputTokenLimit = 262144,
+                outputTokenLimit = 4096,
+                supportsTextGeneration = true
+            ),
+            DiscoveredModel(
+                id = "@cf/qwen/qwen3.8-27b",
+                displayName = "Qwen 3.8 27B (⚡ High Accuracy • Deep Reasoning)",
+                description = "Alibaba Qwen 3.8 27B on Cloudflare. 262K Context Window, advanced multilingual reasoning.",
+                inputTokenLimit = 262144,
+                outputTokenLimit = 4096,
+                supportsTextGeneration = true
+            ),
+            DiscoveredModel(
+                id = "@cf/openai/gpt-oss-120b",
+                displayName = "GPT-OSS 120B (⚡ Flagship MoE • Analytical Depth)",
+                description = "OpenAI 117B MoE Architecture on Cloudflare. 128K Context Window, heavy analytical synthesis.",
+                inputTokenLimit = 131072,
+                outputTokenLimit = 4096,
+                supportsTextGeneration = true
+            ),
+            DiscoveredModel(
+                id = "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                displayName = "Llama 3.3 70B Fast (⚡ High Speed • FP8 Edge)",
+                description = "Meta Llama 3.3 70B FP8 Edge on Cloudflare. 128K Context Window, quantized rapid edge execution.",
+                inputTokenLimit = 131072,
+                outputTokenLimit = 4096,
+                supportsTextGeneration = true
+            )
         )
-        GeminiApiResult.Success(listOf(singleModel))
+        GeminiApiResult.Success(models)
     }
 
     private fun parseErrorMessage(jsonBody: String): String? {

@@ -43,7 +43,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             purgeDeprecatedModels()
 
-            // Ensure Cloudflare Gemma 4 model exists
+            // Ensure verified Cloudflare models exist
             if (database.modelDao().getModelsCount() == 0) {
                 database.modelDao().insertModels(AppDatabase.getDefaultModels())
             }
@@ -92,7 +92,20 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun moveModelPriority(model: ModelEntity, moveUp: Boolean) {
-        // Single model architecture maintains priority 1
+        viewModelScope.launch {
+            val list = database.modelDao().getAllModelsList().toMutableList()
+            val index = list.indexOfFirst { it.id == model.id }
+            if (index == -1) return@launch
+
+            val targetIndex = if (moveUp) index - 1 else index + 1
+            if (targetIndex in list.indices) {
+                val item = list.removeAt(index)
+                list.add(targetIndex, item)
+                list.forEachIndexed { i, m ->
+                    database.modelDao().setModelPriority(m.id, i + 1)
+                }
+            }
+        }
     }
 
     fun refreshModelsFromApi() {
@@ -108,7 +121,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 purgeDeprecatedModels()
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
-                    statusMessage = "Model @cf/google/gemma-4-26b-a4b-it ready. Add a Cloudflare API Key to test live connection.",
+                    statusMessage = "Cloudflare models ready. Add an API Key and Account ID in Accounts to test live connection.",
                     errorMessage = null
                 )
                 return@launch
@@ -122,7 +135,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                 purgeDeprecatedModels()
                 _uiState.value = _uiState.value.copy(
                     isRefreshing = false,
-                    statusMessage = "Model @cf/google/gemma-4-26b-a4b-it ready.",
+                    statusMessage = "4 verified Cloudflare models ready.",
                     errorMessage = "Active key is missing Token or Account ID."
                 )
                 return@launch
@@ -133,7 +146,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                     purgeDeprecatedModels()
                     _uiState.value = _uiState.value.copy(
                         isRefreshing = false,
-                        statusMessage = "Connection verified! Cloudflare Workers AI with Gemma 4 26B is active.",
+                        statusMessage = "Connection verified! Cloudflare Workers AI is connected with 4 active models.",
                         errorMessage = null
                     )
                 }
@@ -155,7 +168,7 @@ class ModelsViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.value = _uiState.value.copy(
                         isRefreshing = false,
                         statusMessage = null,
-                        errorMessage = "Cloudflare rate limit hit (429)."
+                        errorMessage = "Cloudflare rate limit reached (429)."
                     )
                 }
                 is GeminiApiResult.TransientError -> {

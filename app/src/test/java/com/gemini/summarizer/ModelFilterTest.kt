@@ -8,8 +8,11 @@ import org.junit.Test
 class ModelFilterTest {
 
     @Test
-    fun testValidCloudflareGemmaModelAllowed() {
-        assertTrue(ModelFilter.isAllowedTextModel("@cf/google/gemma-4-26b-a4b-it", "Gemma 4 26B (Cloudflare)"))
+    fun testAllFourVerifiedCloudflareModelsAllowed() {
+        assertTrue(ModelFilter.isAllowedTextModel(ModelFilter.MODEL_GEMMA, "Gemma 4 26B"))
+        assertTrue(ModelFilter.isAllowedTextModel(ModelFilter.MODEL_QWEN, "Qwen 3.8 27B"))
+        assertTrue(ModelFilter.isAllowedTextModel(ModelFilter.MODEL_GPT_OSS, "GPT-OSS 120B"))
+        assertTrue(ModelFilter.isAllowedTextModel(ModelFilter.MODEL_LLAMA, "Llama 3.3 70B Fast"))
         assertTrue(ModelFilter.isAllowedTextModel("@cf/google/gemma-4-26b-a4b-it"))
     }
 
