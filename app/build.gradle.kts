@@ -126,6 +126,9 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // PDF Text Extraction
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 

@@ -2,6 +2,12 @@ package com.gemini.summarizer.domain.engine
 
 import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.domain.model.SummaryConfig
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 
 data class SummarizationFinalResult(
     val summaryText: String,
@@ -18,12 +24,12 @@ class HierarchicalSummarizer(
 ) {
 
     companion object {
-        // Optimized for Cloudflare Workers AI edge model context & latency budgets.
         // Single pass for documents up to 3,500 words (~10-14 standard pages).
-        // Larger documents transition seamlessly into rolling-context hierarchical summarization.
+        // Larger documents transition seamlessly into parallel chunk summarization.
         const val MAX_WORDS_PER_CHUNK = 3500
         const val CHUNK_OVERLAP_WORDS = 250
         const val MAX_SYNTHESIS_INPUT_WORDS = 4000
+        const val MAX_PARALLEL_CHUNKS = 4
     }
 
     suspend fun summarizeFile(
@@ -86,7 +92,7 @@ class HierarchicalSummarizer(
 
         // 1. Single pass for texts within the safe Cloudflare edge window
         if (inputWordCount <= MAX_WORDS_PER_CHUNK) {
-            onProgressUpdate("Executing single-pass comprehensive summarization...")
+            onProgressUpdate("Executing single-pass comprehensive summarization ($inputWordCount words)...")
             val prompt = """
                 Source text:
                 $trimmed
@@ -114,58 +120,70 @@ class HierarchicalSummarizer(
             }
         }
 
-        // 2. Multi-stage hierarchical summarization with rolling context & semantic overlap
+        // 2. High-speed parallel chunk processing for long documents
         val chunks = splitTextIntoSemanticChunks(trimmed, MAX_WORDS_PER_CHUNK, CHUNK_OVERLAP_WORDS)
-        val intermediateSummaries = mutableListOf<String>()
-        var rollingContext = ""
+        val totalSections = chunks.size
+        onProgressUpdate("Distributing $totalSections sections for parallel high-speed processing...")
+
+        val completedCounter = AtomicInteger(0)
+        val semaphore = Semaphore(MAX_PARALLEL_CHUNKS)
         var lastModelUsed = ""
         var lastAccountUsed = ""
         var lastProjectId = ""
 
-        for ((index, chunk) in chunks.withIndex()) {
-            val sectionNum = index + 1
-            val totalSections = chunks.size
-            onProgressUpdate("Analyzing section $sectionNum of $totalSections with contextual continuity...")
+        val chunkResults = try {
+            coroutineScope {
+                chunks.mapIndexed { index, chunk ->
+                    async {
+                        semaphore.withPermit {
+                            val sectionNum = index + 1
+                            val sectionPlacement = when (sectionNum) {
+                                1 -> "Introduction & Contextual Opening"
+                                totalSections -> "Final Conclusion & Strategic Summary"
+                                else -> "Core Analysis & Thematic Progression"
+                            }
 
-            val sectionPrompt = if (rollingContext.isBlank()) {
-                """
-                Section $sectionNum of $totalSections (Initial Section):
-                
-                $chunk
-                
-                Extract all essential arguments, critical facts, data points, and context from this section.
-                Highlight key themes and conclusions clearly.
-                """.trimIndent()
-            } else {
-                """
-                Section $sectionNum of $totalSections:
-                
-                [Preceding Context / پیش‌زمینه و خلاصه بخش‌های پیشین]:
-                $rollingContext
-                
-                [Current Section Content / متن بخش فعلی]:
-                $chunk
-                
-                Analyze and summarize this current section in direct continuity with the preceding context.
-                Detail how this section advances the earlier arguments, identify new data points or conclusions, and maintain the narrative thread.
-                """.trimIndent()
+                            val sectionPrompt = """
+                                Document Section $sectionNum of $totalSections ($sectionPlacement):
+                                
+                                $chunk
+                                
+                                Instructions:
+                                Extract all essential arguments, critical facts, quantitative data, and logical progression from this section.
+                                Highlight core themes and findings clearly so they can be synthesized seamlessly into a whole document summary.
+                            """.trimIndent()
+
+                            val result = rotationEngine.executeWithAutoRotation(
+                                prompt = sectionPrompt,
+                                systemInstruction = systemInstruction,
+                                fileData = null
+                            )
+
+                            when (result) {
+                                is RotationExecutionResult.Success -> {
+                                    val currentDone = completedCounter.incrementAndGet()
+                                    onProgressUpdate("Processed section $currentDone of $totalSections in parallel...")
+                                    Triple(sectionNum, result.outputText.trim(), result)
+                                }
+                                is RotationExecutionResult.AllExhausted -> throw Exception(result.message)
+                                is RotationExecutionResult.Failure -> throw Exception(result.message)
+                            }
+                        }
+                    }
+                }.awaitAll()
             }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
 
-            val chunkResult = rotationEngine.executeWithAutoRotation(sectionPrompt, systemInstruction, null, onProgressUpdate)
-            when (chunkResult) {
-                is RotationExecutionResult.Success -> {
-                    val sectionSummary = chunkResult.outputText.trim()
-                    intermediateSummaries.add("### Section $sectionNum Summary\n$sectionSummary")
-                    lastModelUsed = chunkResult.modelUsed
-                    lastAccountUsed = chunkResult.accountName
-                    lastProjectId = chunkResult.projectId
-
-                    // Update rolling context for subsequent chunks (condensed to ~150-200 words to avoid token bloat)
-                    rollingContext = extractKeyTakeaways(sectionSummary, maxWords = 180)
-                }
-                is RotationExecutionResult.AllExhausted -> return Result.failure(Exception(chunkResult.message))
-                is RotationExecutionResult.Failure -> return Result.failure(Exception(chunkResult.message))
-            }
+        // Sort chunks chronologically by their original sequence
+        val sortedResults = chunkResults.sortedBy { it.first }
+        val intermediateSummaries = sortedResults.map { "### Section ${it.first} Summary\n${it.second}" }
+        val lastSuccess = sortedResults.lastOrNull()?.third
+        if (lastSuccess != null) {
+            lastModelUsed = lastSuccess.modelUsed
+            lastAccountUsed = lastSuccess.accountName
+            lastProjectId = lastSuccess.projectId
         }
 
         // 3. Recursive reduction if intermediate summaries exceed the synthesis limit
@@ -240,20 +258,6 @@ class HierarchicalSummarizer(
         }
     }
 
-    private fun extractKeyTakeaways(text: String, maxWords: Int): String {
-        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
-        val sb = StringBuilder()
-        var words = 0
-
-        for (line in lines) {
-            val lineWords = line.split("\\s+".toRegex()).size
-            if (words + lineWords > maxWords && sb.isNotEmpty()) break
-            sb.append(line).append("\n")
-            words += lineWords
-        }
-        return sb.toString().trim()
-    }
-
     private fun countWordsInList(items: List<String>): Int {
         return items.sumOf { it.split("\\s+".toRegex()).size }
     }
@@ -277,12 +281,10 @@ class HierarchicalSummarizer(
         for (paragraph in paragraphs) {
             val pWords = paragraph.split("\\s+".toRegex()).size
 
-            // If adding this paragraph exceeds chunk size and we already have content
             if (currentWords + pWords > maxWordsPerChunk && currentChunkParas.isNotEmpty()) {
                 val chunkContent = currentChunkParas.joinToString("\n\n")
                 chunks.add(chunkContent)
 
-                // Compute overlap paragraphs from the tail of current chunk
                 val overlapParas = mutableListOf<String>()
                 var collectedOverlapWords = 0
                 for (para in currentChunkParas.reversed()) {
@@ -299,7 +301,6 @@ class HierarchicalSummarizer(
                 currentWords = collectedOverlapWords
             }
 
-            // If a single paragraph is exceptionally huge, split it on sentence boundaries
             if (pWords > maxWordsPerChunk) {
                 val sentences = paragraph.split(Regex("(?<=[.!?\\n])\\s+"))
                 for (sentence in sentences) {

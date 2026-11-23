@@ -38,3 +38,8 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
+# PDFBox Android
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+
+

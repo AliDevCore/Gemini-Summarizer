@@ -3,6 +3,9 @@ package com.gemini.summarizer.core.file
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -132,15 +135,49 @@ class DocumentExtractor(private val context: Context) {
     }
 
     private fun extractPdfText(uri: Uri): String {
-        val sb = StringBuilder()
+        // 1. Primary extractor: robust PDFBox Android engine (handles RTL, embedded fonts & ToUnicode CMaps)
+        try {
+            PDFBoxResourceLoader.init(context)
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                PDDocument.load(stream).use { document ->
+                    val stripper = PDFTextStripper()
+                    stripper.sortByPosition = true
+                    val extracted = stripper.getText(document)?.trim() ?: ""
+                    if (extracted.isNotBlank()) {
+                        return cleanExtractedPdfText(extracted)
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        // 2. Secondary fallback extractor
         try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 val bytes = stream.readBytes()
-                sb.append(parsePdfTextFromBytes(bytes))
+                val fallback = parsePdfTextFromBytes(bytes).trim()
+                if (fallback.isNotBlank()) {
+                    return cleanExtractedPdfText(fallback)
+                }
             }
         } catch (_: Exception) {
         }
-        return sb.toString().trim()
+        return ""
+    }
+
+    private fun cleanExtractedPdfText(text: String): String {
+        return text
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .lines()
+            .map { it.trim() }
+            .filter { line ->
+                val lower = line.lowercase()
+                !(lower == "ar-sa" || lower == "en-us" || lower.startsWith("/lang") || lower.startsWith("/span") || lower.startsWith("/tagsuspect"))
+            }
+            .joinToString("\n")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
     }
 
     private fun parsePdfTextFromBytes(bytes: ByteArray): String {
@@ -209,7 +246,9 @@ class DocumentExtractor(private val context: Context) {
             } else if (ch == ')' && inParen) {
                 inParen = false
                 val s = current.toString().trim()
-                if (s.isNotEmpty()) {
+                val lower = s.lowercase()
+                // Strict filter against internal PDF metadata strings
+                if (s.isNotEmpty() && lower != "ar-sa" && lower != "en-us" && !lower.startsWith("/lang") && !lower.startsWith("/span")) {
                     out.append(s).append(" ")
                 }
             } else if (inParen) {
