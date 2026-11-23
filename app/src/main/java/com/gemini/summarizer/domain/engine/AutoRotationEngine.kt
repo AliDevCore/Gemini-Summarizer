@@ -26,6 +26,10 @@ class AutoRotationEngine(
     private val apiClient: GeminiApiClient = GeminiApiClient()
 ) {
 
+    companion object {
+        private val keyIndexCounter = java.util.concurrent.atomic.AtomicInteger(0)
+    }
+
     suspend fun executeWithAutoRotation(
         prompt: String,
         systemInstruction: String? = null,
@@ -60,8 +64,12 @@ class AutoRotationEngine(
 
             var modelHadValidAttempt = false
 
+            // Order keys using thread-safe Round-Robin so parallel chunks distribute evenly across different Cloudflare accounts
+            val startIndex = Math.floorMod(keyIndexCounter.getAndIncrement(), validKeys.size)
+            val orderedKeys = List(validKeys.size) { i -> validKeys[(startIndex + i) % validKeys.size] }
+
             // Rotate across available Cloudflare keys for current target model
-            for (keyEntity in validKeys) {
+            for (keyEntity in orderedKeys) {
                 val rawApiKey = securityManager.getApiKey(keyEntity.keyIdentifier)
                 if (rawApiKey.isNullOrBlank()) {
                     database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, "Token missing in secure storage")
