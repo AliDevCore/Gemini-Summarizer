@@ -10,6 +10,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -20,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -378,10 +381,15 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
             // Results Section
             uiState.summaryResult?.let { result ->
+                val isDark = isSystemInDarkTheme()
+                val resultCardBg = if (isDark) Color(0xFF132238) else Color(0xFFEFF5FE)
+                val resultCardBorder = if (isDark) Color(0xFF264066) else Color(0xFFCCE0FA)
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    border = BorderStroke(1.dp, resultCardBorder),
+                    colors = CardDefaults.cardColors(containerColor = resultCardBg)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
