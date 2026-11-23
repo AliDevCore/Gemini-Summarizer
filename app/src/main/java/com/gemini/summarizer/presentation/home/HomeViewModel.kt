@@ -107,7 +107,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 inputText = "",
                 summaryResult = null,
-                errorMessage = null
+                errorMessage = null,
+                liveLogs = emptyList()
             )
         }
     }
@@ -119,14 +120,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 selectedFileBase64 = null,
                 selectedFileText = null,
                 selectedFileMimeType = null,
-                errorMessage = null
+                summaryResult = null,
+                errorMessage = null,
+                liveLogs = emptyList()
             )
         }
     }
 
     fun processFileUri(uri: Uri) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, progressMessage = "Opening document...") }
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    progressMessage = "Opening document...",
+                    summaryResult = null,
+                    liveLogs = emptyList()
+                )
+            }
             withContext(Dispatchers.IO) {
                 try {
                     val extractResult = documentExtractor.extractFromUri(uri)
@@ -225,6 +235,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.update {
             it.copy(
+                summaryResult = null,
                 isLoading = true,
                 errorMessage = null,
                 progressMessage = "Initializing AI engine...",
