@@ -137,9 +137,9 @@ object MediaHelper {
         val minutes = (totalSec % 3600) / 60
         val remainingSec = totalSec % 60
         return if (hours > 0) {
-            String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, remainingSec)
+            String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, remainingSec)
         } else {
-            String.format(Locale.getDefault(), "%02d:%02d", minutes, remainingSec)
+            String.format(Locale.US, "%02d:%02d", minutes, remainingSec)
         }
     }
 }

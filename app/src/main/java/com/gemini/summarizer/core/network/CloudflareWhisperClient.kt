@@ -1,6 +1,6 @@
 package com.gemini.summarizer.core.network
 
-import android.util.Base64
+import java.util.Base64
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.QuotaStateEntity
 import com.gemini.summarizer.core.security.SecurityManager
@@ -201,7 +201,7 @@ class CloudflareWhisperClient(
     ): GeminiApiResult<WhisperResult> = withContext(Dispatchers.IO) {
         val url = "https://api.cloudflare.com/client/v4/accounts/$accountId/ai/run/$modelId"
 
-        val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
+        val base64Audio = Base64.getEncoder().encodeToString(audioBytes)
         val payload = JsonObject().apply {
             addProperty("audio", base64Audio)
             addProperty("vad_filter", false)
