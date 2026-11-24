@@ -11,8 +11,14 @@ import com.gemini.summarizer.core.network.CloudflareWhisperClient
 import com.gemini.summarizer.core.security.SecurityManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 data class MediaTranscriptionResult(
     val transcriptText: String,
@@ -120,40 +126,60 @@ class MediaTranscriptionEngine(
         }
 
         val preparedMedia = prepareResult.getOrThrow()
-        val accountsUsed = mutableListOf<String>()
-        val chunkTranscripts = mutableListOf<String>()
 
         return try {
             val totalChunks = preparedMedia.chunks.size
+            val activeKeysCount = database.apiKeyDao().getAllValidKeys().size.coerceAtLeast(1)
+            val parallelLimit = activeKeysCount.coerceAtMost(totalChunks)
 
-            for ((i, chunk) in preparedMedia.chunks.withIndex()) {
-                val chunkLabel = if (totalChunks > 1) " (Part ${i + 1}/$totalChunks)" else ""
-                onProgressUpdate("Transcribing speech with Cloudflare Whisper$chunkLabel...")
-
-                val audioBytes = chunk.file.readBytes()
-                val whisperResult = whisperClient.transcribeWithRotation(
-                    audioBytes = audioBytes,
-                    language = targetLanguage,
-                    modelId = whisperModel,
-                    onProgressUpdate = onProgressUpdate
+            if (totalChunks > 1 && parallelLimit > 1) {
+                onProgressUpdate(
+                    "Dispatching $totalChunks audio parts concurrently across $parallelLimit active Cloudflare accounts..."
                 )
-
-                if (whisperResult.isFailure) {
-                    return Result.failure(
-                        whisperResult.exceptionOrNull() ?: Exception("Transcription failed on chunk ${i + 1}.")
-                    )
-                }
-
-                val data = whisperResult.getOrThrow()
-                if (!accountsUsed.contains(data.accountUsed)) {
-                    accountsUsed.add(data.accountUsed)
-                }
-
-                val text = data.text.trim()
-                if (text.isNotBlank()) {
-                    chunkTranscripts.add(text)
-                }
             }
+
+            val semaphore = Semaphore(parallelLimit)
+            val completedCounter = AtomicInteger(0)
+
+            val indexedTranscripts = coroutineScope {
+                preparedMedia.chunks.mapIndexed { i, chunk ->
+                    async {
+                        semaphore.withPermit {
+                            val chunkLabel = if (totalChunks > 1) " (Part ${i + 1}/$totalChunks)" else ""
+                            onProgressUpdate("Transcribing speech with Cloudflare Whisper$chunkLabel...")
+
+                            val audioBytes = chunk.file.readBytes()
+                            val whisperResult = whisperClient.transcribeWithRotation(
+                                audioBytes = audioBytes,
+                                language = targetLanguage,
+                                modelId = whisperModel,
+                                preferredSlot = i,
+                                onProgressUpdate = onProgressUpdate
+                            )
+
+                            if (whisperResult.isFailure) {
+                                throw ChunkTranscriptionException(
+                                    whisperResult.exceptionOrNull()?.message
+                                        ?: "Transcription failed on chunk ${i + 1}."
+                                )
+                            }
+
+                            val data = whisperResult.getOrThrow()
+                            val finished = completedCounter.incrementAndGet()
+                            if (totalChunks > 1) {
+                                onProgressUpdate(
+                                    "Completed part ${i + 1}/$totalChunks ($finished/$totalChunks finished) via ${data.accountUsed}."
+                                )
+                            }
+                            Triple(i, data.text.trim(), data.accountUsed)
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            val orderedResults = indexedTranscripts.sortedBy { it.first }
+            val chunkTranscripts = orderedResults.mapNotNull { (_, text, _) -> text.ifBlank { null } }
+            val accountsUsed = orderedResults.map { it.third }.distinct()
 
             val fullTranscript = chunkTranscripts.joinToString("\n\n")
             val totalWords = if (fullTranscript.isBlank()) 0 else fullTranscript.trim().split("\\s+".toRegex()).size
@@ -181,10 +207,14 @@ class MediaTranscriptionEngine(
             )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: ChunkTranscriptionException) {
+            Result.failure(Exception(e.message ?: "Speech transcription failed."))
         } catch (e: Exception) {
             Result.failure(Exception("Speech transcription failed: ${e.localizedMessage ?: "Unknown error"}"))
         } finally {
             preparedMedia.tempFilesToClean.forEach { it.delete() }
         }
     }
+
+    private class ChunkTranscriptionException(message: String) : Exception(message)
 }

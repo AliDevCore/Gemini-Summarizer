@@ -7,6 +7,7 @@ import com.gemini.summarizer.core.network.GeminiApiResult
 import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.core.security.SecurityManager
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 sealed class RotationExecutionResult {
     data class Success(
@@ -116,8 +117,9 @@ class AutoRotationEngine(
                         retryCount++
                         val baseWait = 1000L * (1 shl (retryCount - 1))
                         val jitter = (0..350).random()
-                        val totalWait = baseWait + jitter
-                        onProgressUpdate?.invoke("Temporary network lag. Retrying with backoff in ${totalWait}ms...")
+                        val totalWait = (baseWait + jitter).coerceAtMost(10_000L)
+                        val waitSec = String.format(Locale.US, "%.1f", totalWait / 1000.0)
+                        onProgressUpdate?.invoke("Temporary network lag. Retrying in ${waitSec}s...")
                         delay(totalWait)
                     } else {
                         break

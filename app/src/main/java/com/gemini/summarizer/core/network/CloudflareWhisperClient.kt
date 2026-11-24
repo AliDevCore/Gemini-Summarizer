@@ -38,6 +38,7 @@ class CloudflareWhisperClient(
     companion object {
         const val MODEL_WHISPER_TURBO = "@cf/openai/whisper-large-v3-turbo"
         const val MODEL_WHISPER_BASE = "@cf/openai/whisper"
+        private const val MAX_RETRY_BACKOFF_MS = 10_000L
 
         private val roundRobinCounter = AtomicInteger(0)
 
@@ -85,6 +86,7 @@ class CloudflareWhisperClient(
         audioBytes: ByteArray,
         language: String = "auto",
         modelId: String = MODEL_WHISPER_TURBO,
+        preferredSlot: Int? = null,
         onProgressUpdate: ((String) -> Unit)? = null
     ): Result<WhisperResult> = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
@@ -98,7 +100,8 @@ class CloudflareWhisperClient(
         }
 
         val targetLangCode = mapLanguageCode(language)
-        val startIndex = Math.floorMod(roundRobinCounter.getAndIncrement(), validKeys.size)
+        val slotSeed = preferredSlot ?: roundRobinCounter.getAndIncrement()
+        val startIndex = Math.floorMod(slotSeed, validKeys.size)
         val orderedKeys = List(validKeys.size) { i -> validKeys[(startIndex + i) % validKeys.size] }
 
         var lastErrorMsg: String? = null
@@ -131,7 +134,8 @@ class CloudflareWhisperClient(
             onProgressUpdate?.invoke("Transcribing with Cloudflare Whisper ($accountDisplayName) [lang=$langLabel]...")
 
             var retryCount = 0
-            val maxRetries = 2
+            // When multiple accounts are available, retry once quickly (2s) before rotating to a healthier account
+            val maxRetries = if (validKeys.size > 1) 1 else 2
             var callResult: GeminiApiResult<WhisperResult>
 
             while (true) {
@@ -146,8 +150,9 @@ class CloudflareWhisperClient(
 
                 if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
                     retryCount++
-                    val backoff = 1000L * (1 shl retryCount)
-                    onProgressUpdate?.invoke("Network lag encountered. Retrying in ${backoff}ms...")
+                    val backoff = (1000L * (1 shl retryCount)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
+                    val waitSec = backoff / 1000L
+                    onProgressUpdate?.invoke("Network lag on $accountDisplayName. Retrying in ${waitSec}s...")
                     delay(backoff)
                 } else {
                     break
