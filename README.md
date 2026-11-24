@@ -119,7 +119,7 @@ Access four verified, high-performance models running serverless on Cloudflare W
 2. Tap the **Media (Audio / Video)** button to select a file from your device, or paste a direct media URL into the text field.
 3. An **Attached Media** badge will display the detected file format and size.
 4. Select your desired operation:
-   - **Speech to Text**: Transcribes speech and displays an interactive preview card with word count and a copy button.
+   - **Transcript Only**: Transcribes speech and displays an interactive preview card with word count and a copy button.
    - **Transcribe & Summarize**: Transcribes audio and immediately generates a comprehensive executive summary.
 
 ### 2. Configure Cloudflare Accounts

@@ -488,24 +488,38 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             onClick = { viewModel.extractTranscriptOnly() },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(52.dp),
-                            shape = MaterialTheme.shapes.medium
+                                .heightIn(min = 56.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                         ) {
-                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Speech to Text", maxLines = 1)
+                            Text(
+                                text = "Transcript Only",
+                                fontSize = 13.sp,
+                                lineHeight = 16.sp,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2
+                            )
                         }
 
                         Button(
                             onClick = { viewModel.startSummarization() },
                             modifier = Modifier
-                                .weight(1.3f)
-                                .height(52.dp),
-                            shape = MaterialTheme.shapes.medium
+                                .weight(1.25f)
+                                .heightIn(min = 56.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                         ) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Transcribe & Summarize", maxLines = 1)
+                            Text(
+                                text = "Transcribe & Summarize",
+                                fontSize = 13.sp,
+                                lineHeight = 16.sp,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2
+                            )
                         }
                     }
                 } else {
