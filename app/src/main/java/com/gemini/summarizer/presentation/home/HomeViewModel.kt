@@ -2,20 +2,21 @@ package com.gemini.summarizer.presentation.home
 
 import android.app.Application
 import android.net.Uri
-import android.provider.OpenableColumns
-import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.database.entity.HistoryEntity
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.export.DocumentExporter
+import com.gemini.summarizer.core.file.DocumentExtractor
+import com.gemini.summarizer.core.media.AppMediaType
+import com.gemini.summarizer.core.media.MediaHelper
 import com.gemini.summarizer.core.network.GeminiFileData
 import com.gemini.summarizer.core.security.SecurityManager
 import com.gemini.summarizer.domain.engine.AutoRotationEngine
 import com.gemini.summarizer.domain.engine.HierarchicalSummarizer
+import com.gemini.summarizer.domain.engine.MediaTranscriptionEngine
 import com.gemini.summarizer.domain.engine.SummarizationFinalResult
-import com.gemini.summarizer.core.file.DocumentExtractor
 import com.gemini.summarizer.domain.model.SummaryConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,9 +38,13 @@ data class HomeUiState(
     val progressMessage: String = "",
     val liveLogs: List<String> = emptyList(),
     val selectedFileName: String? = null,
+    val selectedMediaType: AppMediaType = AppMediaType.NONE,
+    val selectedMediaUri: Uri? = null,
     val selectedFileBase64: String? = null,
     val selectedFileText: String? = null,
     val selectedFileMimeType: String? = null,
+    val extractedTranscript: String? = null,
+    val isTranscribingSpeech: Boolean = false,
     val summaryResult: SummarizationFinalResult? = null,
     val targetLanguage: String = "Auto",
     val summaryLength: String = "Medium",
@@ -58,6 +63,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val rotationEngine = AutoRotationEngine(database, securityManager)
     private val hierarchicalSummarizer = HierarchicalSummarizer(rotationEngine)
+    private val transcriptionEngine = MediaTranscriptionEngine(application, database, securityManager)
 
     private var summarizationJob: Job? = null
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -117,9 +123,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 selectedFileName = null,
+                selectedMediaType = AppMediaType.NONE,
+                selectedMediaUri = null,
                 selectedFileBase64 = null,
                 selectedFileText = null,
                 selectedFileMimeType = null,
+                extractedTranscript = null,
                 summaryResult = null,
                 errorMessage = null,
                 liveLogs = emptyList()
@@ -129,6 +138,34 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun processFileUri(uri: Uri) {
         viewModelScope.launch {
+            val context = getApplication<Application>()
+            val mediaType = MediaHelper.getMediaTypeFromUri(context, uri)
+            val fileName = MediaHelper.getFileNameFromUri(context, uri)
+
+            if (mediaType == AppMediaType.AUDIO || mediaType == AppMediaType.VIDEO) {
+                // Audio / Video Media File
+                _uiState.update {
+                    it.copy(
+                        selectedFileName = fileName,
+                        selectedMediaType = mediaType,
+                        selectedMediaUri = uri,
+                        selectedFileBase64 = null,
+                        selectedFileText = null,
+                        selectedFileMimeType = if (mediaType == AppMediaType.AUDIO) "audio/*" else "video/*",
+                        extractedTranscript = null,
+                        summaryResult = null,
+                        errorMessage = null,
+                        isLoading = false,
+                        progressMessage = ""
+                    )
+                }
+                val typeName = if (mediaType == AppMediaType.AUDIO) "Audio" else "Video"
+                val log = formatLog("Selected $typeName file: $fileName. Ready to transcribe with Cloudflare Whisper.")
+                _uiState.update { it.copy(liveLogs = it.liveLogs + log) }
+                return@launch
+            }
+
+            // Document File (PDF, DOCX, TXT, etc.)
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -137,6 +174,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     liveLogs = emptyList()
                 )
             }
+
             withContext(Dispatchers.IO) {
                 try {
                     val extractResult = documentExtractor.extractFromUri(uri)
@@ -154,9 +192,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                 _uiState.update {
                                     it.copy(
                                         selectedFileName = doc.fileName,
+                                        selectedMediaType = AppMediaType.DOCUMENT,
+                                        selectedMediaUri = null,
                                         selectedFileBase64 = null,
                                         selectedFileText = doc.text,
                                         selectedFileMimeType = "text/plain",
+                                        extractedTranscript = null,
                                         isLoading = false,
                                         progressMessage = "",
                                         errorMessage = null
@@ -187,6 +228,84 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun extractTranscriptOnly() {
+        val mediaUri = _uiState.value.selectedMediaUri
+        val rawInput = _uiState.value.inputText.trim()
+        val isMediaUrl = isWebUrl(rawInput) && MediaHelper.isMediaUrlCandidate(rawInput)
+
+        if (mediaUri == null && !isMediaUrl) {
+            _uiState.update { it.copy(errorMessage = "Please attach an audio/video file or enter a media link first.") }
+            return
+        }
+
+        summarizationJob?.cancel()
+        val startLog = formatLog("Starting speech-to-text extraction...")
+        _uiState.update {
+            it.copy(
+                isLoading = true,
+                isTranscribingSpeech = true,
+                progressMessage = "Initializing Cloudflare Whisper STT...",
+                errorMessage = null,
+                liveLogs = listOf(startLog)
+            )
+        }
+
+        summarizationJob = viewModelScope.launch {
+            val whisperModel = settingsDataStore.whisperModelFlow.first()
+            val whisperLang = _uiState.value.targetLanguage
+
+            val transResult = if (mediaUri != null) {
+                transcriptionEngine.transcribeMediaUri(
+                    uri = mediaUri,
+                    targetLanguage = whisperLang,
+                    whisperModel = whisperModel,
+                    onProgressUpdate = { progress ->
+                        val log = formatLog(progress)
+                        _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                    }
+                )
+            } else {
+                transcriptionEngine.transcribeMediaUrl(
+                    url = rawInput,
+                    targetLanguage = whisperLang,
+                    whisperModel = whisperModel,
+                    onProgressUpdate = { progress ->
+                        val log = formatLog(progress)
+                        _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                    }
+                )
+            }
+
+            transResult.fold(
+                onSuccess = { res ->
+                    val doneLog = formatLog("Speech transcription completed successfully (${res.totalWords} words).")
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isTranscribingSpeech = false,
+                            progressMessage = "",
+                            extractedTranscript = res.transcriptText,
+                            inputText = res.transcriptText,
+                            liveLogs = it.liveLogs + doneLog
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    val errLog = formatLog("Transcription failed: ${err.message}")
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isTranscribingSpeech = false,
+                            progressMessage = "",
+                            errorMessage = err.message ?: "Transcription failed.",
+                            liveLogs = it.liveLogs + errLog
+                        )
+                    }
+                }
+            )
+        }
+    }
+
     fun cancelSummarization() {
         summarizationJob?.cancel()
         summarizationJob = null
@@ -194,8 +313,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 isLoading = false,
+                isTranscribingSpeech = false,
                 progressMessage = "",
-                errorMessage = "Summarization cancelled by user.",
+                errorMessage = "Operation cancelled by user.",
                 liveLogs = it.liveLogs + cancelLog
             )
         }
@@ -221,12 +341,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSummarization() {
+        val hasMediaUri = _uiState.value.selectedMediaUri != null
         val hasPdf = _uiState.value.selectedFileBase64 != null
         val hasExtractedDoc = _uiState.value.selectedFileText != null
         val hasText = _uiState.value.inputText.isNotBlank()
 
-        if (!hasPdf && !hasExtractedDoc && !hasText) {
-            _uiState.update { it.copy(errorMessage = "Please enter text, a web URL, or select a document.") }
+        if (!hasMediaUri && !hasPdf && !hasExtractedDoc && !hasText) {
+            _uiState.update { it.copy(errorMessage = "Please enter text, a web URL, or select a document/media file.") }
             return
         }
 
@@ -237,6 +358,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 summaryResult = null,
                 isLoading = true,
+                isTranscribingSpeech = false,
                 errorMessage = null,
                 progressMessage = "Initializing AI engine...",
                 liveLogs = listOf(startLog)
@@ -251,8 +373,153 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         summarizationJob = viewModelScope.launch {
+            val whisperModel = settingsDataStore.whisperModelFlow.first()
+            val rawInput = _uiState.value.inputText.trim()
+
+            // 1. Check if user attached an Audio or Video file
+            if (hasMediaUri) {
+                val mediaUri = _uiState.value.selectedMediaUri!!
+                val fileName = _uiState.value.selectedFileName ?: "Media"
+
+                val transLog = formatLog("Step 1/2: Transcribing speech from '$fileName' with Cloudflare Whisper...")
+                _uiState.update {
+                    it.copy(
+                        progressMessage = "Transcribing speech from media file...",
+                        liveLogs = it.liveLogs + transLog
+                    )
+                }
+
+                val transResult = transcriptionEngine.transcribeMediaUri(
+                    uri = mediaUri,
+                    targetLanguage = _uiState.value.targetLanguage,
+                    whisperModel = whisperModel,
+                    onProgressUpdate = { progress ->
+                        val log = formatLog(progress)
+                        _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                    }
+                )
+
+                if (transResult.isFailure) {
+                    val err = transResult.exceptionOrNull()
+                    val failLog = formatLog("Speech transcription failed: ${err?.message}")
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            progressMessage = "",
+                            errorMessage = err?.message ?: "Failed to transcribe audio from media file.",
+                            liveLogs = it.liveLogs + failLog
+                        )
+                    }
+                    return@launch
+                }
+
+                val transcriptionData = transResult.getOrThrow()
+                _uiState.update { it.copy(extractedTranscript = transcriptionData.transcriptText) }
+
+                val summaryLog = formatLog("Step 2/2: Summarizing extracted transcript (${transcriptionData.totalWords} words)...")
+                _uiState.update {
+                    it.copy(
+                        progressMessage = "Summarizing transcript with AI...",
+                        liveLogs = it.liveLogs + summaryLog
+                    )
+                }
+
+                val userNotes = _uiState.value.inputText.ifBlank { null }
+                val contentToSummarize = if (userNotes != null) {
+                    "User Focus / Directives: $userNotes\n\nSpoken Dialogue Transcript:\n${transcriptionData.transcriptText}"
+                } else {
+                    transcriptionData.transcriptText
+                }
+
+                val summaryResult = hierarchicalSummarizer.summarizeText(
+                    inputText = contentToSummarize,
+                    config = config,
+                    onProgressUpdate = { progress ->
+                        val log = formatLog(progress)
+                        _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                    }
+                )
+
+                handleSummaryResult(
+                    result = summaryResult,
+                    config = config,
+                    title = "[${if (_uiState.value.selectedMediaType == AppMediaType.VIDEO) "Video" else "Audio"}] $fileName",
+                    originalText = transcriptionData.transcriptText
+                )
+                return@launch
+            }
+
+            // 2. Check if user provided an Audio/Video URL
+            if (isWebUrl(rawInput)) {
+                val mediaProbe = withContext(Dispatchers.IO) {
+                    MediaHelper.probeUrlContentType(rawInput)
+                }
+
+                if (mediaProbe == AppMediaType.AUDIO || mediaProbe == AppMediaType.VIDEO) {
+                    val transLog = formatLog("Step 1/2: Downloading and transcribing media from URL with Cloudflare Whisper...")
+                    _uiState.update {
+                        it.copy(
+                            progressMessage = "Transcribing speech from media link...",
+                            liveLogs = it.liveLogs + transLog
+                        )
+                    }
+
+                    val transResult = transcriptionEngine.transcribeMediaUrl(
+                        url = rawInput,
+                        targetLanguage = _uiState.value.targetLanguage,
+                        whisperModel = whisperModel,
+                        onProgressUpdate = { progress ->
+                            val log = formatLog(progress)
+                            _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                        }
+                    )
+
+                    if (transResult.isFailure) {
+                        val err = transResult.exceptionOrNull()
+                        val failLog = formatLog("Media transcription failed: ${err?.message}")
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                progressMessage = "",
+                                errorMessage = err?.message ?: "Failed to transcribe speech from media URL.",
+                                liveLogs = it.liveLogs + failLog
+                            )
+                        }
+                        return@launch
+                    }
+
+                    val transcriptionData = transResult.getOrThrow()
+                    _uiState.update { it.copy(extractedTranscript = transcriptionData.transcriptText) }
+
+                    val summaryLog = formatLog("Step 2/2: Summarizing extracted transcript (${transcriptionData.totalWords} words)...")
+                    _uiState.update {
+                        it.copy(
+                            progressMessage = "Summarizing transcript with AI...",
+                            liveLogs = it.liveLogs + summaryLog
+                        )
+                    }
+
+                    val summaryResult = hierarchicalSummarizer.summarizeText(
+                        inputText = transcriptionData.transcriptText,
+                        config = config,
+                        onProgressUpdate = { progress ->
+                            val log = formatLog(progress)
+                            _uiState.update { it.copy(progressMessage = progress, liveLogs = it.liveLogs + log) }
+                        }
+                    )
+
+                    handleSummaryResult(
+                        result = summaryResult,
+                        config = config,
+                        title = "[Media Link] ${transcriptionData.displayName}",
+                        originalText = transcriptionData.transcriptText
+                    )
+                    return@launch
+                }
+            }
+
+            // 3. Document (PDF inline or DOCX/TXT) or regular Web / Text
             val result = if (hasPdf) {
-                // PDF native inlineData
                 hierarchicalSummarizer.summarizeFile(
                     fileData = GeminiFileData(
                         mimeType = "application/pdf",
@@ -264,15 +531,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     onProgressUpdate = { progress ->
                         val logEntry = formatLog(progress)
                         _uiState.update {
-                            it.copy(
-                                progressMessage = progress,
-                                liveLogs = it.liveLogs + logEntry
-                            )
+                            it.copy(progressMessage = progress, liveLogs = it.liveLogs + logEntry)
                         }
                     }
                 )
             } else if (hasExtractedDoc) {
-                // DOCX or attached TXT file
                 val docText = _uiState.value.selectedFileText!!
                 val notes = _uiState.value.inputText.ifBlank { null }
                 val contentWithNotes = if (notes != null) "User Instructions: $notes\n\nDocument Content:\n$docText" else docText
@@ -283,16 +546,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     onProgressUpdate = { progress ->
                         val logEntry = formatLog(progress)
                         _uiState.update {
-                            it.copy(
-                                progressMessage = progress,
-                                liveLogs = it.liveLogs + logEntry
-                            )
+                            it.copy(progressMessage = progress, liveLogs = it.liveLogs + logEntry)
                         }
                     }
                 )
             } else {
-                // Direct input text or live Web URL
-                val rawInput = _uiState.value.inputText.trim()
                 val textToSummarize = if (isWebUrl(rawInput)) {
                     val fetchLog = formatLog("Fetching live webpage: $rawInput...")
                     _uiState.update {
@@ -334,69 +592,69 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     onProgressUpdate = { progress ->
                         val logEntry = formatLog(progress)
                         _uiState.update {
-                            it.copy(
-                                progressMessage = progress,
-                                liveLogs = it.liveLogs + logEntry
-                            )
+                            it.copy(progressMessage = progress, liveLogs = it.liveLogs + logEntry)
                         }
                     }
                 )
             }
 
-            result.fold(
-                onSuccess = { summaryResult ->
-                    val successLog = formatLog("Summary generated successfully!")
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            progressMessage = "",
-                            summaryResult = summaryResult,
-                            liveLogs = it.liveLogs + successLog
-                        )
-                    }
-
-                    // Save to history if enabled
-                    if (settingsDataStore.saveHistoryFlow.first()) {
-                        val saveOrig = settingsDataStore.saveOriginalTextFlow.first()
-                        val title = _uiState.value.selectedFileName ?: if (isWebUrl(_uiState.value.inputText)) "Web Summary" else "Text Summary"
-                        val originalTextToSave = if (hasPdf || hasExtractedDoc) {
-                            "[Document: ${_uiState.value.selectedFileName}]"
-                        } else if (saveOrig) {
-                            _uiState.value.inputText
-                        } else {
-                            "[Original text omitted per user settings]"
-                        }
-
-                        database.historyDao().insertHistory(
-                            HistoryEntity(
-                                title = title,
-                                originalText = originalTextToSave,
-                                summaryText = summaryResult.summaryText,
-                                modelUsed = summaryResult.modelUsed,
-                                accountUsed = summaryResult.accountUsed,
-                                projectId = summaryResult.projectId,
-                                inputWords = summaryResult.inputWords,
-                                outputWords = summaryResult.outputWords,
-                                stepsCount = summaryResult.stepsCount,
-                                targetLanguage = config.targetLanguage,
-                                summaryType = config.summaryType
-                            )
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    val failLog = formatLog("Error: ${error.message ?: "Unknown error"}")
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            progressMessage = "",
-                            errorMessage = error.message ?: "Summarization failed.",
-                            liveLogs = it.liveLogs + failLog
-                        )
-                    }
-                }
-            )
+            val title = _uiState.value.selectedFileName ?: if (isWebUrl(rawInput)) "Web Summary" else "Text Summary"
+            handleSummaryResult(result, config, title, rawInput)
         }
+    }
+
+    private suspend fun handleSummaryResult(
+        result: Result<SummarizationFinalResult>,
+        config: SummaryConfig,
+        title: String,
+        originalText: String
+    ) {
+        result.fold(
+            onSuccess = { summaryResult ->
+                val successLog = formatLog("Summary generated successfully!")
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        progressMessage = "",
+                        summaryResult = summaryResult,
+                        liveLogs = it.liveLogs + successLog
+                    )
+                }
+
+                // Save to history if enabled
+                if (settingsDataStore.saveHistoryFlow.first()) {
+                    val saveOrig = settingsDataStore.saveOriginalTextFlow.first()
+                    val originalTextToSave = if (saveOrig) originalText else "[Original text omitted per user settings]"
+
+                    database.historyDao().insertHistory(
+                        HistoryEntity(
+                            title = title,
+                            originalText = originalTextToSave,
+                            summaryText = summaryResult.summaryText,
+                            modelUsed = summaryResult.modelUsed,
+                            accountUsed = summaryResult.accountUsed,
+                            projectId = summaryResult.projectId,
+                            inputWords = summaryResult.inputWords,
+                            outputWords = summaryResult.outputWords,
+                            stepsCount = summaryResult.stepsCount,
+                            targetLanguage = config.targetLanguage,
+                            summaryType = config.summaryType
+                        )
+                    )
+                }
+            },
+            onFailure = { error ->
+                val failLog = formatLog("Error: ${error.message ?: "Unknown error"}")
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        progressMessage = "",
+                        errorMessage = error.message ?: "Summarization failed.",
+                        liveLogs = it.liveLogs + failLog
+                    )
+                }
+            }
+        )
     }
 
     fun exportSummary(uri: Uri, format: String) {

@@ -94,6 +94,58 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 }
             }
 
+            // Cloudflare Whisper STT Configuration
+            Text("Speech-to-Text (Cloudflare Whisper)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Whisper Model for Audio & Video Transcription", style = MaterialTheme.typography.titleSmall)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val whisperModels = listOf(
+                            "@cf/openai/whisper-large-v3-turbo" to "Whisper Large v3 Turbo (⚡ Recommended • Fast & Accurate)",
+                            "@cf/openai/whisper" to "Whisper Base (@cf/openai/whisper)"
+                        )
+                        whisperModels.forEach { (modelId, label) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = uiState.whisperModel == modelId,
+                                    onClick = { viewModel.setWhisperModel(modelId) }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (uiState.whisperModel == modelId) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Text(
+                                        text = modelId,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    Text(
+                        text = "Cloudflare Workers AI grants 10,000 free daily Neurons per account (~214 minutes of speech transcription). Multi-account auto-rotation seamlessly switches accounts when quota is exhausted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             // History Preferences
             Text("History & Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Card(
@@ -144,15 +196,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Keys are securely encrypted using Android Keystore (AES-256-GCM). No user text or keys are ever transmitted to any third-party server besides official Google Gemini endpoints.",
+                        text = "Keys are securely encrypted using Android Keystore (AES-256-GCM). No user text or keys are ever transmitted to any third-party server besides official Cloudflare Workers AI endpoints.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Text(
-                        text = "Data Processing Notice: Documents, URLs, and prompts are sent directly to Google Gemini APIs over encrypted HTTPS. Under Google Developer Terms, free-tier API inputs may be logged by Google. Use an enterprise/paid Google Cloud project for zero-retention policies.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
                     )
 
                     OutlinedButton(

@@ -20,6 +20,7 @@ class SettingsDataStore(private val context: Context) {
         val KEY_SAVE_HISTORY = booleanPreferencesKey("save_history")
         val KEY_SAVE_ORIGINAL_TEXT = booleanPreferencesKey("save_original_text")
         val KEY_CUSTOM_PROMPT = stringPreferencesKey("custom_prompt")
+        val KEY_WHISPER_MODEL = stringPreferencesKey("whisper_model")
     }
 
     val autoModelPriorityFlow: Flow<Boolean> = context.dataStore.data.map {
@@ -46,6 +47,10 @@ class SettingsDataStore(private val context: Context) {
         it[KEY_SAVE_ORIGINAL_TEXT] ?: false
     }
 
+    val whisperModelFlow: Flow<String> = context.dataStore.data.map {
+        it[KEY_WHISPER_MODEL] ?: "@cf/openai/whisper-large-v3-turbo"
+    }
+
     suspend fun setAutoModelPriority(enabled: Boolean) {
         context.dataStore.edit { it[KEY_AUTO_MODEL_PRIORITY] = enabled }
     }
@@ -68,6 +73,10 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setSaveOriginalText(enabled: Boolean) {
         context.dataStore.edit { it[KEY_SAVE_ORIGINAL_TEXT] = enabled }
+    }
+
+    suspend fun setWhisperModel(modelId: String) {
+        context.dataStore.edit { it[KEY_WHISPER_MODEL] = modelId }
     }
 }
 

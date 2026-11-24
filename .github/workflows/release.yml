@@ -84,6 +84,13 @@ jobs:
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
           echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
 
+      - name: Create and Push Git Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.tag_generator.outputs.TAG_NAME }}" -m "Release ${{ steps.tag_generator.outputs.TAG_NAME }}" || true
+          git push origin "${{ steps.tag_generator.outputs.TAG_NAME }}" || true
+
       - name: Run Unit Tests
         run: ./gradlew test --stacktrace
 
@@ -128,6 +135,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_generator.outputs.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           name: "Gemini Summarizer ${{ steps.tag_generator.outputs.TAG_NAME }}"
           generate_release_notes: true
           body: |
@@ -137,20 +145,19 @@ jobs:
             - **Version Code:** `${{ steps.tag_generator.outputs.VERSION_CODE }}`
             - **Asset:** Standalone signed Android installable APK (`Gemini-Summarizer-${{ steps.tag_generator.outputs.TAG_NAME }}.apk`)
             
-            #### ✨ Highlights & New Features:
-            - **Context-Preserving Hierarchical Summarization:**
-              - Seamless long-document summarization with rolling context memory and semantic chunk overlap.
-              - Eliminates Cloudflare Workers AI edge payload limits and `Input sequence too long` errors.
-              - Holistic multi-stage synthesis guarantees logical continuity, executive clarity, and complete narrative cohesion.
-            - **4 Verified Cloudflare Workers AI Models:**
-              1. `Google Gemma 4 26B` (⚡ Ultra-Fast • Cinematic Persian Fluency)
-              2. `Alibaba Qwen 3.8 27B` (⚡ High Accuracy • Deep Multilingual Reasoning)
-              3. `OpenAI GPT-OSS 120B` (⚡ Flagship MoE • Analytical Depth)
-              4. `Meta Llama 3.3 70B Fast` (⚡ High Speed • FP8 Edge Accelerated)
-            - **Intelligent Dual-Tier Auto-Rotation:**
-              - Automatic failover across prioritized models and configured API keys.
-            - **AI Models Priority Management:**
-              - Reorder model priority order with arrow controls or toggle models on/off directly from the Models screen.
+            #### ✨ Highlights & What's New:
+            - **🎙️ Cloudflare Whisper Speech-to-Text & Audio/Video Summarization:**
+              - Extract spoken dialogue directly from audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`) and video files (`.mp4`, `.mkv`, `.mov`, `.webm`, `.3gp`).
+              - Direct Media URL support: automatically downloads and transcribes remote audio/video links.
+              - High accuracy transcription powered by Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo` with multi-account auto-rotation and quota recovery.
+              - Native Android audio extraction and automatic chunking for long media (> 5 minutes).
+              - Live speech transcript preview with word count and copy button.
+            - **📄 Context-Preserving Hierarchical Summarization:**
+              - Seamless long-document summarization (PDF, DOCX, TXT) with rolling context memory.
+              - Multi-stage synthesis guaranteeing logical continuity and narrative clarity.
+            - **⚡ Multi-Model Cloudflare Workers AI LLM Engine:**
+              - Google Gemma 4 26B, Alibaba Qwen 3.8 27B, GPT-OSS 120B, and Llama 3.3 70B Fast.
+              - Full priority management, account pool rotation, and Android Keystore AES-256-GCM encryption.
             - **Persistent Official Signature:**
               - Built and signed with the official project release certificate for seamless in-place updates.
           files: |

@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -34,6 +35,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gemini.summarizer.core.media.AppMediaType
+import com.gemini.summarizer.core.media.MediaHelper
 import com.gemini.summarizer.core.util.MarkdownRenderer
 
 class DynamicCreateDocumentContract : ActivityResultContract<Pair<String, String>, Uri?>() {
@@ -57,8 +60,15 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
-    // File Picker Launcher
-    val filePickerLauncher = rememberLauncherForActivityResult(
+    // Document Picker Launcher (PDF, DOCX, TXT)
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.processFileUri(it) }
+    }
+
+    // Media Picker Launcher (Audio & Video)
+    val mediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { viewModel.processFileUri(it) }
@@ -76,6 +86,14 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         if (uiState.inputText.isBlank()) 0 else uiState.inputText.trim().split("\\s+".toRegex()).size
     }
     val charCount = uiState.inputText.length
+
+    val isMediaInput = remember(uiState.selectedMediaType, uiState.inputText) {
+        uiState.selectedMediaType == AppMediaType.AUDIO ||
+                uiState.selectedMediaType == AppMediaType.VIDEO ||
+                MediaHelper.isMediaUrlCandidate(uiState.inputText.trim())
+    }
+
+    var showTranscriptSection by remember { mutableStateOf(true) }
 
     Scaffold(
         topBar = {
@@ -95,7 +113,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Document Selection & Active Attachment Card
+            // Document / Media Selection Card
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = if (uiState.selectedFileName != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
@@ -110,15 +128,26 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     if (uiState.selectedFileName != null) {
+                        val fileIcon = when (uiState.selectedMediaType) {
+                            AppMediaType.AUDIO -> Icons.Default.Audiotrack
+                            AppMediaType.VIDEO -> Icons.Default.Videocam
+                            else -> Icons.Default.InsertDriveFile
+                        }
+                        val typeDescription = when (uiState.selectedMediaType) {
+                            AppMediaType.AUDIO -> "Audio File • Cloudflare Whisper Speech-to-Text"
+                            AppMediaType.VIDEO -> "Video File • Extract Audio & Cloudflare Whisper STT"
+                            else -> "Document ready to summarize directly"
+                        }
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f).padding(end = 8.dp)
                         ) {
                             Icon(
-                                Icons.Default.InsertDriveFile,
+                                fileIcon,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(32.dp)
                             )
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -131,7 +160,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Ready to transmit directly to Gemini",
+                                    text = typeDescription,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                                 )
@@ -145,55 +174,77 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             )
                         }
                     } else {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
-                                text = "Attach Document",
+                                text = "Attach File or Media",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Supports PDF, DOCX, TXT, Markdown, CSV",
+                                text = "PDF, DOCX, TXT, or Audio & Video (MP3, MP4, WAV, M4A...)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        FilledTonalButton(
-                            onClick = {
-                                filePickerLauncher.launch(
-                                    arrayOf(
-                                        "application/pdf",
-                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        "text/*"
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilledTonalButton(
+                                onClick = {
+                                    documentPickerLauncher.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "text/*"
+                                        )
                                     )
-                                )
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Doc", style = MaterialTheme.typography.labelMedium)
                             }
-                        ) {
-                            Icon(Icons.Default.UploadFile, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Browse")
+
+                            FilledTonalButton(
+                                onClick = {
+                                    mediaPickerLauncher.launch(
+                                        arrayOf("audio/*", "video/*")
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Audio/Video", style = MaterialTheme.typography.labelMedium)
+                            }
                         }
                     }
                 }
             }
 
-            // Direct Text Input Field (Supports text or live web URLs!)
+            // Direct Text / Web / Media URL Input Field
             OutlinedTextField(
                 value = uiState.inputText,
                 onValueChange = { viewModel.onInputTextChanged(it) },
                 label = {
                     Text(
-                        if (uiState.selectedFileName != null)
-                            "Additional Instructions / Notes (Optional)"
-                        else
-                            "Input Text or Web URL"
+                        if (uiState.selectedFileName != null) {
+                            if (uiState.selectedMediaType == AppMediaType.AUDIO || uiState.selectedMediaType == AppMediaType.VIDEO) {
+                                "Focus Directives / Questions on Audio/Video (Optional)"
+                            } else {
+                                "Additional Instructions / Notes (Optional)"
+                            }
+                        } else {
+                            "Input Text, Web Page, or Audio/Video URL"
+                        }
                     )
                 },
                 placeholder = {
                     Text(
-                        if (uiState.selectedFileName != null)
-                            "Enter any special focus or instructions for the attached document..."
-                        else
-                            "Type/paste text, articles, or a web URL (e.g. https://...)"
+                        if (uiState.selectedFileName != null) {
+                            "Enter any specific questions or focus for the speech/document summary..."
+                        } else {
+                            "Type text, article URL, or media link (e.g. https://.../audio.mp3, video.mp4)"
+                        }
                     )
                 },
                 modifier = Modifier
@@ -271,6 +322,70 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
+            // Extracted Speech Transcript Preview Card (Whisper Result)
+            uiState.extractedTranscript?.let { transcript ->
+                val transcriptWords = remember(transcript) {
+                    if (transcript.isBlank()) 0 else transcript.trim().split("\\s+".toRegex()).size
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Extracted Speech ($transcriptWords words)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                            Row {
+                                IconButton(onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Whisper Transcript", transcript)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Transcript copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy Transcript", tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                }
+                                IconButton(onClick = { showTranscriptSection = !showTranscriptSection }) {
+                                    Icon(
+                                        if (showTranscriptSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = "Toggle",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
+
+                        AnimatedVisibility(visible = showTranscriptSection) {
+                            Column {
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                                SelectionContainer {
+                                    Text(
+                                        text = transcript,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 10,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Error Display
             if (uiState.errorMessage != null) {
                 Card(
@@ -292,7 +407,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
-            // Progress Indicator & Cancel / Stop Button
+            // Progress Indicator & Stop Button
             if (uiState.isLoading) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -308,7 +423,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             text = uiState.progressMessage,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(12.dp))
                         Button(
@@ -318,7 +434,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                         ) {
                             Icon(Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onError)
                             Spacer(Modifier.width(8.dp))
-                            Text("Cancel / Stop Summarization", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError)
+                            Text("Cancel / Stop Operation", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError)
                         }
                     }
                 }
@@ -360,22 +476,54 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
-            // Summarize Button
+            // Action Buttons
             if (!uiState.isLoading) {
-                Button(
-                    onClick = { viewModel.startSummarization() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    enabled = uiState.inputText.isNotBlank() || uiState.selectedFileName != null,
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (uiState.selectedFileName != null) "Summarize Document" else "Summarize with Gemini",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                if (isMediaInput) {
+                    // When media is attached or entered, give both "Extract Transcript" and "Summarize" options
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.extractTranscriptOnly() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Speech to Text", maxLines = 1)
+                        }
+
+                        Button(
+                            onClick = { viewModel.startSummarization() },
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(52.dp),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Transcribe & Summarize", maxLines = 1)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.startSummarization() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        enabled = uiState.inputText.isNotBlank() || uiState.selectedFileName != null,
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = if (uiState.selectedFileName != null) "Summarize Document" else "Summarize with Gemini",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
                 }
             }
 
@@ -415,7 +563,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                             }
                         }
 
-                        // Metadata Badges (without internal project ID clutter)
+                        // Metadata Badges
                         Text(
                             text = "Model: ${result.modelUsed} | Key: ${result.accountUsed} | Stages: ${result.stepsCount}",
                             style = MaterialTheme.typography.labelSmall,
@@ -456,7 +604,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
                         HorizontalDivider()
 
-                        // Export Options with stylish icons and proper MIME type launchers
+                        // Export Options
                         Text("Export Summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Row(
                             modifier = Modifier.fillMaxWidth(),

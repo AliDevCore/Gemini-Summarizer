@@ -19,6 +19,12 @@
 4. **Meta Llama 3.3 70B Fast** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`): ⚡ Edge Accelerated FP8, rapid balanced execution.
 
 ### 🔑 Key Capabilities
+- **🎙️ Cloudflare Whisper Speech-to-Text & Media Summarization:**
+  - Directly transcribe and summarize spoken dialogue from audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`) and video files (`.mp4`, `.mkv`, `.mov`, `.webm`, `.3gp`).
+  - Direct media URL support: automatically downloads and transcribes remote audio and video links.
+  - Powered by Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo` and `@cf/openai/whisper` with automatic multi-account failover and quota recovery (10,000 free daily Neurons / ~214 minutes per account).
+  - Native Android audio extraction and automatic chunking for long media.
+  - Live dialogue transcript preview with word counter and instant clipboard copy.
 - **🧠 Context-Preserving Hierarchical Summarization:**
   - Dynamic chunking with **250-word semantic overlap** across paragraphs.
   - **Rolling context accumulation** so each section knows what came before without narrative breaks.

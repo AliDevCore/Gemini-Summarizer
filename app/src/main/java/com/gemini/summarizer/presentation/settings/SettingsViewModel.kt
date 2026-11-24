@@ -20,6 +20,7 @@ data class SettingsUiState(
     val defaultType: String = "General",
     val saveHistory: Boolean = true,
     val saveOriginalText: Boolean = true,
+    val whisperModel: String = "@cf/openai/whisper-large-v3-turbo",
     val message: String? = null
 )
 
@@ -58,6 +59,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = _uiState.value.copy(saveOriginalText = it)
             }
         }
+        viewModelScope.launch {
+            settingsDataStore.whisperModelFlow.collectLatest {
+                _uiState.value = _uiState.value.copy(whisperModel = it)
+            }
+        }
     }
 
     fun setDefaultLanguage(lang: String) {
@@ -78,6 +84,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setSaveOriginalText(enabled: Boolean) {
         viewModelScope.launch { settingsDataStore.setSaveOriginalText(enabled) }
+    }
+
+    fun setWhisperModel(modelId: String) {
+        viewModelScope.launch { settingsDataStore.setWhisperModel(modelId) }
     }
 
     fun clearAllSecureKeys() {
