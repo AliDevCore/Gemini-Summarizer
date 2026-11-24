@@ -68,4 +68,12 @@ class MediaHelperTest {
         assertEquals("05:00", MediaHelper.formatDuration(300f))
         assertEquals("01:02:05", MediaHelper.formatDuration(3725f))
     }
+
+    @Test
+    fun testExtractExtensionFromUrl() {
+        assertEquals("mp3", MediaHelper.extractExtensionFromUrl("https://example.com/audio/podcast.mp3?token=123"))
+        assertEquals("mp4", MediaHelper.extractExtensionFromUrl("https://example.com/video/lecture.mp4#t=10"))
+        assertEquals("wav", MediaHelper.extractExtensionFromUrl("http://cdn.site.com/track.wav"))
+        assertEquals("mp3", MediaHelper.extractExtensionFromUrl("https://example.com/stream-no-extension"))
+    }
 }

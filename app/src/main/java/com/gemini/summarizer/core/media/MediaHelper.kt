@@ -79,6 +79,12 @@ object MediaHelper {
         return isMediaExtension(ext)
     }
 
+    fun extractExtensionFromUrl(url: String): String {
+        val cleanPath = url.trim().substringBefore("?").substringBefore("#")
+        val ext = cleanPath.substringAfterLast(".", "").lowercase(Locale.ROOT)
+        return if (ext.isNotBlank() && ext.length in 2..5) ext else "mp3"
+    }
+
     suspend fun probeUrlContentType(url: String): AppMediaType = withContext(Dispatchers.IO) {
         if (isMediaUrlCandidate(url)) {
             val cleanPath = url.trim().substringBefore("?").substringBefore("#")
