@@ -248,6 +248,32 @@ class MediaAudioExtractor(private val context: Context) {
         onProgress: ((String) -> Unit)?
     ): Result<List<AudioChunk>> = withContext(Dispatchers.IO) {
         val chunks = mutableListOf<AudioChunk>()
+        val ext = inputFile.extension.lowercase()
+
+        // Ultra-Fast Path: If MP3 is already lightweight (<= 80 kbps average bitrate, e.g. 64 kbps speech),
+        // slice directly into 10-minute MP3 frames (< 0.5s) without re-encoding to AAC!
+        if (ext == "mp3" && durationSec > 1.0f) {
+            val avgBitrateBps = (inputFile.length() * 8.0) / durationSec
+            if (avgBitrateBps <= 80_000.0) {
+                val directChunkSec = 600.0f // 10 min (~2.4 to 5 MB per slice)
+                val estTotalChunks = Math.max(1, Math.ceil((durationSec / directChunkSec).toDouble()).toInt())
+                onProgress?.invoke("Lightweight MP3 detected (${(avgBitrateBps / 1000).toInt()} kbps). Fast-slicing into $estTotalChunks parts...")
+                val mp3Fast = tryDirectMp3Chunking(
+                    inputFile = inputFile,
+                    totalDurationSec = durationSec,
+                    totalChunks = estTotalChunks,
+                    outChunks = chunks,
+                    onProgress = onProgress,
+                    chunkDurationSec = directChunkSec
+                )
+                if (mp3Fast && chunks.isNotEmpty()) {
+                    return@withContext Result.success(chunks)
+                }
+                chunks.forEach { it.file.delete() }
+                chunks.clear()
+            }
+        }
+
         val compressedTotalChunks = Math.max(1, Math.ceil((durationSec / COMPRESSED_CHUNK_DURATION_SEC).toDouble()).toInt())
 
         // Primary Strategy: Compress to 16kHz Mono AAC (24 kbps) -> 15-minute chunks (~2.7 MB each)
@@ -414,9 +440,9 @@ class MediaAudioExtractor(private val context: Context) {
             var totalMonoSamplesFed = 0L
             var lastReportPercent = -1
 
+            var decTempBuf = ByteArray(65536)
             val pcmQueue = ByteArray(65536)
             var pcmQueueSize = 0
-            val timeoutUs = 5000L
 
             fun drainEncoder() {
                 while (true) {
@@ -455,7 +481,11 @@ class MediaAudioExtractor(private val context: Context) {
             fun flushPcmQueueToEncoder(endOfInput: Boolean) {
                 var offset = 0
                 while (offset < pcmQueueSize) {
-                    val encInIdx = encoder.dequeueInputBuffer(timeoutUs)
+                    var encInIdx = encoder.dequeueInputBuffer(0L)
+                    if (encInIdx < 0) {
+                        drainEncoder()
+                        encInIdx = encoder.dequeueInputBuffer(500L)
+                    }
                     if (encInIdx >= 0) {
                         val encInBuf = encoder.getInputBuffer(encInIdx)
                         if (encInBuf != null) {
@@ -480,7 +510,11 @@ class MediaAudioExtractor(private val context: Context) {
 
                 if (endOfInput && !encoderInputDone) {
                     while (true) {
-                        val encInIdx = encoder.dequeueInputBuffer(timeoutUs)
+                        var encInIdx = encoder.dequeueInputBuffer(0L)
+                        if (encInIdx < 0) {
+                            drainEncoder()
+                            encInIdx = encoder.dequeueInputBuffer(500L)
+                        }
                         if (encInIdx >= 0) {
                             val ptsUs = (totalMonoSamplesFed * 1_000_000L) / TARGET_SAMPLE_RATE
                             encoder.queueInputBuffer(encInIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -495,25 +529,34 @@ class MediaAudioExtractor(private val context: Context) {
             }
 
             while (!encoderEOS) {
-                if (!extractorEOS) {
-                    val decInIdx = decoder.dequeueInputBuffer(timeoutUs)
-                    if (decInIdx >= 0) {
-                        val decInBuf = decoder.getInputBuffer(decInIdx)
-                        if (decInBuf != null) {
-                            val sampleSize = extractor.readSampleData(decInBuf, 0)
-                            if (sampleSize < 0) {
-                                decoder.queueInputBuffer(decInIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                extractorEOS = true
-                            } else {
-                                decoder.queueInputBuffer(decInIdx, 0, sampleSize, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
+                var madeProgress = false
+
+                // 1. Batch-feed all available input slots into decoder without waiting
+                var fedCount = 0
+                while (!extractorEOS && fedCount < 8) {
+                    val decInIdx = decoder.dequeueInputBuffer(0L)
+                    if (decInIdx < 0) break
+                    madeProgress = true
+                    fedCount++
+                    val decInBuf = decoder.getInputBuffer(decInIdx)
+                    if (decInBuf != null) {
+                        val sampleSize = extractor.readSampleData(decInBuf, 0)
+                        if (sampleSize < 0) {
+                            decoder.queueInputBuffer(decInIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            extractorEOS = true
+                        } else {
+                            decoder.queueInputBuffer(decInIdx, 0, sampleSize, extractor.sampleTime, 0)
+                            extractor.advance()
                         }
                     }
                 }
 
-                if (!decoderEOS) {
-                    val decOutIdx = decoder.dequeueOutputBuffer(decInfo, timeoutUs)
+                // 2. Drain all ready decoded PCM buffers and downsample via fast L1-cached ByteArray
+                while (!decoderEOS) {
+                    val decOutIdx = decoder.dequeueOutputBuffer(decInfo, 0L)
+                    if (decOutIdx == MediaCodec.INFO_TRY_AGAIN_LATER) break
+                    madeProgress = true
+
                     when {
                         decOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             val newFmt = decoder.outputFormat
@@ -523,26 +566,38 @@ class MediaAudioExtractor(private val context: Context) {
                         decOutIdx >= 0 -> {
                             val outBuf = decoder.getOutputBuffer(decOutIdx)
                             if (outBuf != null && decInfo.size > 0) {
+                                if (decInfo.size > decTempBuf.size) {
+                                    decTempBuf = ByteArray(decInfo.size)
+                                }
                                 outBuf.position(decInfo.offset)
-                                outBuf.limit(decInfo.offset + decInfo.size)
-                                outBuf.order(ByteOrder.LITTLE_ENDIAN)
+                                outBuf.get(decTempBuf, 0, decInfo.size)
 
                                 val step = srcSampleRate.toDouble() / TARGET_SAMPLE_RATE.toDouble()
                                 val safeChannels = Math.max(1, srcChannels)
                                 val frameSize = safeChannels * 2
-                                val frames = decInfo.size / frameSize
+                                val totalBytes = decInfo.size - (decInfo.size % frameSize)
+                                var bytePos = 0
 
-                                for (f in 0 until frames) {
+                                while (bytePos < totalBytes) {
                                     resamplePos += 1.0
                                     if (resamplePos >= step) {
                                         resamplePos -= step
 
                                         val sampleVal: Short = if (safeChannels == 1) {
-                                            outBuf.short
+                                            ((decTempBuf[bytePos].toInt() and 0xFF) or
+                                                    (decTempBuf[bytePos + 1].toInt() shl 8)).toShort()
+                                        } else if (safeChannels == 2) {
+                                            val l = ((decTempBuf[bytePos].toInt() and 0xFF) or
+                                                    (decTempBuf[bytePos + 1].toInt() shl 8)).toShort().toInt()
+                                            val r = ((decTempBuf[bytePos + 2].toInt() and 0xFF) or
+                                                    (decTempBuf[bytePos + 3].toInt() shl 8)).toShort().toInt()
+                                            ((l + r) / 2).toShort()
                                         } else {
-                                            var sum = 0L
+                                            var sum = 0
                                             for (ch in 0 until safeChannels) {
-                                                sum += outBuf.short.toLong()
+                                                val chOffset = bytePos + ch * 2
+                                                sum += ((decTempBuf[chOffset].toInt() and 0xFF) or
+                                                        (decTempBuf[chOffset + 1].toInt() shl 8)).toShort().toInt()
                                             }
                                             (sum / safeChannels).toShort()
                                         }
@@ -552,11 +607,8 @@ class MediaAudioExtractor(private val context: Context) {
                                         }
                                         pcmQueue[pcmQueueSize++] = (sampleVal.toInt() and 0xFF).toByte()
                                         pcmQueue[pcmQueueSize++] = ((sampleVal.toInt() shr 8) and 0xFF).toByte()
-                                    } else {
-                                        for (ch in 0 until safeChannels) {
-                                            outBuf.short
-                                        }
                                     }
+                                    bytePos += frameSize
                                 }
 
                                 if (totalDurationSec > 0f) {
@@ -574,17 +626,25 @@ class MediaAudioExtractor(private val context: Context) {
                             if ((decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                                 decoderEOS = true
                                 flushPcmQueueToEncoder(endOfInput = true)
-                            } else if (pcmQueueSize >= 4096) {
+                                break
+                            } else if (pcmQueueSize >= 32768) {
                                 flushPcmQueueToEncoder(endOfInput = false)
                             }
                         }
                     }
-                } else {
+                }
+
+                if (decoderEOS) {
                     if (!encoderInputDone) {
                         flushPcmQueueToEncoder(endOfInput = true)
+                        madeProgress = true
                     } else {
                         drainEncoder()
                     }
+                }
+
+                if (!madeProgress && !encoderEOS) {
+                    Thread.sleep(1)
                 }
             }
 
@@ -621,7 +681,8 @@ class MediaAudioExtractor(private val context: Context) {
         totalDurationSec: Float,
         totalChunks: Int,
         outChunks: MutableList<AudioChunk>,
-        onProgress: ((String) -> Unit)?
+        onProgress: ((String) -> Unit)?,
+        chunkDurationSec: Float = CHUNK_TARGET_DURATION_SEC
     ): Boolean {
         try {
             val fileLength = inputFile.length()
@@ -652,7 +713,7 @@ class MediaAudioExtractor(private val context: Context) {
                 var currentChunkOut: BufferedOutputStream? = null
                 var framesInChunk = 0
 
-                val targetChunkSec = CHUNK_TARGET_DURATION_SEC.toDouble()
+                val targetChunkSec = chunkDurationSec.toDouble()
 
                 fun startNewChunk() {
                     currentChunkOut?.flush()
