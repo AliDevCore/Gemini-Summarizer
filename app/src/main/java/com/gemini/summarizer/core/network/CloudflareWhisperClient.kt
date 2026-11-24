@@ -46,7 +46,7 @@ class CloudflareWhisperClient(
         private val LANGUAGE_PROMPTS = mapOf(
             "en" to "Hello, welcome. Please transcribe with clear punctuation, commas, periods, question marks, and dialogue.",
             "ar" to "مرحبا. يرجى كتابة النص المنطوق بدقة مع علامات الترقيم الصحيحة.",
-            "tr" to "Merhaba. Lütfen noktalama işaretlerine dikkat ederek doğru bir şekilde yazıیا geçirin.",
+            "tr" to "Merhaba. Lütfen noktalama işaretlerine dikkat ederek doğru bir şekilde yazıya geçirin.",
             "fr" to "Bonjour. Veuillez transcrire avec une ponctuation claire, des virgules et des points.",
             "de" to "Hallo. Bitte mit korrekter Zeichensetzung und Rechtschreibung transkribieren.",
             "es" to "Hola. Por favor, transcribe con puntuación clara, comas y puntos.",

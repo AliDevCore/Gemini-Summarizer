@@ -228,13 +228,13 @@ class HierarchicalSummarizer(
             Synthesize these into one cohesive, beautifully organized, and flowing comprehensive final summary.
             
             CRITICAL REQUIREMENTS:
-            1. Maintain an unbroken logical thread (نخ تسبیح و پیوستگی یکپارچه) from introduction, through structured deep analysis, to final conclusions.
+            1. Maintain an unbroken logical thread and seamless coherence from introduction, through structured deep analysis, to final conclusions.
             2. Do NOT simply concatenate section bullet points. Eliminate cross-section redundancies, resolve narrative references, and produce a harmonious reading flow.
             3. Structure with clear Markdown headers:
-               - Executive Overview / پیام اصلی و خلاصه اجرایی
-               - Core Analysis & Detailed Insights / تحلیل جامع بخش‌ها و استدلال‌های کلیدی
-               - Evidence, Data & Specific Findings / شواهد، داده‌ها و مصادیق مهم
-               - Final Takeaways & Synthesis / جمع‌بندی راهبردی و نتیجه‌گیری پایانی
+               - Executive Overview
+               - Core Analysis & Detailed Insights
+               - Evidence, Data & Specific Findings
+               - Final Takeaways & Synthesis
             4. Strictly adhere to the requested language and tone throughout.
         """.trimIndent()
 
