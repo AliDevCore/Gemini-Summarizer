@@ -37,6 +37,7 @@ class MediaTranscriptionEngine(
 ) {
     private val audioExtractor = MediaAudioExtractor(context)
     private val whisperClient = CloudflareWhisperClient(database, securityManager)
+    private val transcriptRefiner = TranscriptRefiner(database, securityManager)
 
     /**
      * Transcribe speech from a local media Uri (Audio or Video).
@@ -179,19 +180,28 @@ class MediaTranscriptionEngine(
 
             val orderedResults = indexedTranscripts.sortedBy { it.first }
             val chunkTranscripts = orderedResults.mapNotNull { (_, text, _) -> text.ifBlank { null } }
-            val accountsUsed = orderedResults.map { it.third }.distinct()
+            val whisperAccountsUsed = orderedResults.map { it.third }.distinct()
 
-            val fullTranscript = chunkTranscripts.joinToString("\n\n")
-            val totalWords = if (fullTranscript.isBlank()) 0 else fullTranscript.trim().split("\\s+".toRegex()).size
-
-            if (fullTranscript.isBlank()) {
+            val rawTranscript = chunkTranscripts.joinToString("\n\n")
+            if (rawTranscript.isBlank()) {
                 return Result.failure(
                     Exception("Whisper did not detect any spoken dialogue in the provided media.")
                 )
             }
 
+            // Refine raw Whisper transcript using Gemma 4 26B to fix homophones, punctuation, and sentence phrasing
+            val refineResult = transcriptRefiner.refineTranscript(
+                rawTranscript = rawTranscript,
+                targetLanguage = targetLanguage,
+                onProgressUpdate = onProgressUpdate
+            )
+
+            val fullTranscript = refineResult.text.ifBlank { rawTranscript }
+            val accountsUsed = (whisperAccountsUsed + refineResult.accountsUsed).distinct()
+            val totalWords = if (fullTranscript.isBlank()) 0 else fullTranscript.trim().split("\\s+".toRegex()).size
+
             onProgressUpdate(
-                "Speech transcription completed ($totalWords words extracted from ${MediaHelper.formatDuration(preparedMedia.totalDurationSeconds)})."
+                "Speech transcription & Gemma 4 refinement completed ($totalWords words from ${MediaHelper.formatDuration(preparedMedia.totalDurationSeconds)})."
             )
 
             Result.success(

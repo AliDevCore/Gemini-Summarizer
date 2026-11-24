@@ -41,20 +41,20 @@ data class PreparedMedia(
 class MediaAudioExtractor(private val context: Context) {
 
     companion object {
-        // Compressed speech settings: 16kHz Mono AAC-LC at 32 kbps (~240 KB per minute).
-        // With compressed payloads (~2.4 MB per 10-min chunk), 10-minute slices easily fit within
-        // Cloudflare Workers AI request bounds while enabling fast multi-account parallel execution.
+        // Empirical Cloudflare Whisper optimal configuration:
+        // 16kHz Mono AAC-LC at 24 kbps (~180 KB/min). 15-minute slices (~2.7 MB each) keep
+        // edge GPU inference comfortably under 150s while maximizing 5-account parallelism.
         const val TARGET_SAMPLE_RATE = 16000
         const val TARGET_CHANNELS = 1
-        const val TARGET_AAC_BITRATE = 32_000 // 32 kbps
-        const val COMPRESSED_CHUNK_DURATION_SEC = 600.0f // 10 minutes per compressed chunk
+        const val TARGET_AAC_BITRATE = 24_000 // 24 kbps
+        const val COMPRESSED_CHUNK_DURATION_SEC = 900.0f // 15 minutes per compressed chunk (~2.7 MB)
 
         // Fallback chunk duration for uncompressed audio tracks (MP3/WAV)
         const val CHUNK_TARGET_DURATION_SEC = 240.0f
 
-        // Bypass compression/slicing only if source is already compact audio under 10 min and <= 4 MB
-        const val MAX_SINGLE_PASS_DURATION_SEC = 600.0f
-        const val MAX_SINGLE_PASS_BYTES = 4 * 1024 * 1024 // 4 MB
+        // Bypass compression/slicing only if source is already compact audio under 15 min and <= 3.5 MB
+        const val MAX_SINGLE_PASS_DURATION_SEC = 900.0f
+        const val MAX_SINGLE_PASS_BYTES = 3500 * 1024 // ~3.5 MB
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -250,8 +250,8 @@ class MediaAudioExtractor(private val context: Context) {
         val chunks = mutableListOf<AudioChunk>()
         val compressedTotalChunks = Math.max(1, Math.ceil((durationSec / COMPRESSED_CHUNK_DURATION_SEC).toDouble()).toInt())
 
-        // Primary Strategy: Compress to 16kHz Mono AAC (32 kbps) -> 10-minute chunks (~2.4 MB each)
-        onProgress?.invoke("Compressing audio to 16kHz Mono AAC (32 kbps)...")
+        // Primary Strategy: Compress to 16kHz Mono AAC (24 kbps) -> 15-minute chunks (~2.7 MB each)
+        onProgress?.invoke("Compressing audio to 16kHz Mono AAC (24 kbps)...")
         val compressedFile = transcodeToCompressedAac(inputFile, durationSec, onProgress)
         if (compressedFile != null && compressedFile.exists() && compressedFile.length() > 512) {
             val compressedSizeMb = String.format(java.util.Locale.US, "%.1f", compressedFile.length() / (1024.0 * 1024.0))
@@ -391,7 +391,8 @@ class MediaAudioExtractor(private val context: Context) {
             encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
 
-            muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val activeMuxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = activeMuxer
             var muxerTrackIndex = -1
 
             var srcSampleRate = if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
@@ -424,8 +425,8 @@ class MediaAudioExtractor(private val context: Context) {
                         encOutIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break
                         encOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (!muxerStarted) {
-                                muxerTrackIndex = muxer.addTrack(encoder.outputFormat)
-                                muxer.start()
+                                muxerTrackIndex = activeMuxer.addTrack(encoder.outputFormat)
+                                activeMuxer.start()
                                 muxerStarted = true
                             }
                         }
@@ -438,7 +439,7 @@ class MediaAudioExtractor(private val context: Context) {
                                 if (encInfo.size > 0 && muxerStarted) {
                                     encodedBuf.position(encInfo.offset)
                                     encodedBuf.limit(encInfo.offset + encInfo.size)
-                                    muxer.writeSampleData(muxerTrackIndex, encodedBuf, encInfo)
+                                    activeMuxer.writeSampleData(muxerTrackIndex, encodedBuf, encInfo)
                                 }
                             }
                             encoder.releaseOutputBuffer(encOutIdx, false)
@@ -588,10 +589,10 @@ class MediaAudioExtractor(private val context: Context) {
             }
 
             if (muxerStarted) {
-                muxer.stop()
+                activeMuxer.stop()
                 muxerStarted = false
             }
-            muxer.release()
+            activeMuxer.release()
             muxer = null
 
             if (outFile.exists() && outFile.length() > 1024) {

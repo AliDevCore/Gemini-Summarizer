@@ -30,8 +30,10 @@ By managing multiple Cloudflare accounts with automatic quota rotation, Gemini S
   1. **Transcript Only**: Transcribes spoken dialogue into readable text, complete with word and character counters, and an instant 1-click clipboard copy button.
   2. **Transcribe & Summarize**: Transcribes audio and immediately feeds the resulting transcript into the AI summarization engine for an executive briefing.
 - **Ultra-Compact Compression & Concurrent Processing**:
-  - Automatically compresses long audio and video tracks into ultra-lightweight **16kHz Mono AAC (32 kbps)** (~240 KB per minute) and slices long recordings into compact **10-minute segments** (~2.4 MB each).
+  - Automatically compresses long audio and video tracks into ultra-lightweight **16kHz Mono AAC (24 kbps)** (~180 KB per minute) and slices long recordings into compact **15-minute segments** (~2.7 MB each).
   - Dispatches audio segments **concurrently** across all configured active Cloudflare accounts for blazingly fast turnaround on multi-hour files.
+- **Post-Transcription AI Refinement (Gemma 4)**:
+  - Automatically refines raw Whisper transcripts through **Google Gemma 4 26B** (`@cf/google/gemma-4-26b-a4b-it`) to fix homophone typos, half-spaces, punctuation, and paragraph phrasing while strictly preserving 100% of spoken content.
 - **Hallucination Prevention**:
   - Employs dynamic prompt suppression during multilingual decoding to eliminate repetitive hallucination loops.
 - **Whisper Model Selection**:

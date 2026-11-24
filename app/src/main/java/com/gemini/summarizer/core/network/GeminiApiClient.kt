@@ -62,7 +62,8 @@ class GeminiApiClient {
         accountId: String,
         apiToken: String,
         prompt: String,
-        systemInstruction: String? = null
+        systemInstruction: String? = null,
+        temperature: Double? = null
     ): GeminiApiResult<String> = withContext(Dispatchers.IO) {
         val targetModel = if (modelId.startsWith("@cf/")) modelId else DEFAULT_MODEL
         val cleanAccountId = accountId.trim()
@@ -94,6 +95,9 @@ class GeminiApiClient {
 
         rootJson.add("messages", messagesArray)
         rootJson.addProperty("max_tokens", 4096)
+        if (temperature != null) {
+            rootJson.addProperty("temperature", temperature)
+        }
 
         val requestBody = rootJson.toString().toRequestBody(jsonMediaType)
         val request = Request.Builder()
