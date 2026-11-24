@@ -123,7 +123,7 @@ class MediaTranscriptionEngine(
         val accountsUsed = mutableListOf<String>()
         val chunkTranscripts = mutableListOf<String>()
 
-        try {
+        return try {
             val totalChunks = preparedMedia.chunks.size
 
             for ((i, chunk) in preparedMedia.chunks.withIndex()) {
