@@ -1,6 +1,6 @@
 # Gemini Summarizer 🤖📱
 
-**Intelligent Multi-Account Android Summarization Application Powered by Cloudflare Workers AI & Hierarchical Context Architecture**
+**Intelligent Multi-Account Android Summarization & Speech-to-Text Application Powered by Cloudflare Workers AI**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
@@ -9,105 +9,97 @@
 
 ---
 
-## 🌟 Executive Overview
+## 🌟 معرفی و کاربرد نرم‌افزار
 
-**Gemini Summarizer** is a production-grade, privacy-focused native Android application built with **Kotlin** and **Jetpack Compose (Material 3)**. It is designed to intelligently ingest, parse, chunk, and summarize long texts, live web articles via URL, and complex documents (PDF, DOCX, TXT, Markdown, CSV) using **4 verified high-performance models** hosted serverless on **Cloudflare Workers AI**:
+**Gemini Summarizer** یک نرم‌افزار قدرتمند، مدرن و کاملاً رایگان برای سیستم‌عامل اندروید است که با استفاده از سرورلس‌های ابری **Cloudflare Workers AI**، امکان **تبدیل گفتار به متن (Speech-to-Text)** و **خلاصه‌سازی هوشمند متون طولانی، اسناد، صفحات وب، پادکست‌ها و ویدیوها** را فراهم می‌کند.
 
-1. **Google Gemma 4 26B A4B IT** (`@cf/google/gemma-4-26b-a4b-it`): ⚡ Ultra-Fast (~30s), top-tier Persian fluency & cinematic phrasing.
-2. **Alibaba Qwen 3.8 27B** (`@cf/qwen/qwen3.8-27b`): ⚡ High Accuracy, deep multilingual reasoning and complex document structuring.
-3. **OpenAI GPT-OSS 120B** (`@cf/openai/gpt-oss-120b`): ⚡ Flagship 117B MoE Architecture, deep analytical synthesis.
-4. **Meta Llama 3.3 70B Fast** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`): ⚡ Edge Accelerated FP8, rapid balanced execution.
-
-### 🔑 Key Capabilities
-- **🎙️ Cloudflare Whisper Speech-to-Text & Media Summarization:**
-  - Directly transcribe and summarize spoken dialogue from audio files (`.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, `.flac`) and video files (`.mp4`, `.mkv`, `.mov`, `.webm`, `.3gp`).
-  - Direct media URL support: automatically downloads and transcribes remote audio and video links.
-  - Powered by Cloudflare Workers AI `@cf/openai/whisper-large-v3-turbo` and `@cf/openai/whisper` with automatic multi-account failover and quota recovery (10,000 free daily Neurons / ~214 minutes per account).
-  - Native Android audio extraction and automatic chunking for long media.
-  - Live dialogue transcript preview with word counter and instant clipboard copy.
-- **🧠 Context-Preserving Hierarchical Summarization:**
-  - Dynamic chunking with **250-word semantic overlap** across paragraphs.
-  - **Rolling context accumulation** so each section knows what came before without narrative breaks.
-  - **Holistic synthesis stage** eliminating redundant points and preserving unbroken thought progression.
-  - Eliminates Cloudflare Workers AI `Input sequence too long` and edge timeout errors completely.
-- **🔄 Dual-Tier Auto-Rotation Engine:**
-  - Automatic failover across prioritized models and configured API keys.
-  - Seamlessly rotates when a model or account encounters rate limits (HTTP 429) or transient errors.
-- **🎛️ AI Models Priority Management:**
-  - View all 4 models with real-time connection status.
-  - Reorder priority order (#1, #2, #3, #4) or toggle individual models on/off.
-- **🌐 Live Web Page & Article Summarization:**
-  - Paste any web URL (`https://...`); the app fetches live HTML via **Jsoup**, strips boilerplate, and delivers an executive summary.
-- **📑 Document Ingestion & Local Extraction:**
-  - Built-in lightweight, pure-Kotlin parsers extract selectable text from PDF documents and Word DOCX archives (`word/document.xml`).
-- **🛑 Cancellable Coroutines & Live Logs:**
-  - Cancellable network operations with an on-demand Stop button and live timestamped activity console.
-- **🌍 Bidirectional RTL Support:**
-  - Proper per-paragraph bidirectional rendering and typography for Persian, Arabic, and multilingual outputs.
-- **💾 Multi-Page Styled Export:**
-  - Multi-page PDF export with RTL support, plus structured Word DOCX export with headings and bullets.
+این برنامه بدون نیاز به اشتراک‌های گران‌قیمت یا وابستگی به یک سرویس خاص، به شما اجازه می‌دهد چندین اکانت کلودفلر را در نرم‌افزار ثبت کنید تا برنامه با مدیریت هوشمند سهمیه‌ها، کارهای سنگین هوش مصنوعی را بدون قطعی و به شکل کاملاً رایگان انجام دهد.
 
 ---
 
-## 🏗️ System Architecture
+## 🚀 ویژگی‌ها و امکانات برجسته
 
-The application is structured according to **Clean Architecture** and **MVVM** principles with strict separation of concerns:
-
-```
-com.gemini.summarizer/
-│
-├── core/
-│   ├── security/        # Android Keystore (AES-256-GCM) secure token storage
-│   ├── network/         # Cloudflare Workers AI REST client (OkHttp) with error parsing
-│   ├── database/        # Room Database (Accounts, Keys, Models, Quota, History)
-│   ├── datastore/       # Preferences DataStore for configuration
-│   ├── file/            # Pure-Kotlin document text extraction (PDF, DOCX, TXT, MD, CSV)
-│   ├── export/          # Export generation (PDF, DOCX, TXT, Markdown)
-│   └── navigation/      # Jetpack Compose Navigation & Bottom Navigation Bar
-│
-├── domain/
-│   ├── model/           # SummaryConfig, Execution results
-│   └── engine/          # AutoRotationEngine & HierarchicalSummarizer (Rolling Context)
-│
-└── presentation/
-    ├── home/            # Summarization screen, input editor, file picker, results
-    ├── accounts/        # Cloudflare API Token & Account ID multi-account management
-    ├── models/          # 4 Cloudflare Workers AI models, priority reordering, connection testing
-    ├── history/         # Searchable local history of past summaries
-    └── settings/        # Global defaults, language selection, security wipe
-```
+### 🎙️ تبدیل صوت و ویدیو به متن (Speech-to-Text) با Whisper
+- **پشتیبانی کامل از انواع فایل‌های صوتی و ویدیویی**:
+  - **فرمت‌های صوتی**: `MP3`, `WAV`, `M4A`, `AAC`, `OGG`, `OPUS`, `FLAC`
+  - **فرمت‌های ویدیویی**: `MP4`, `MKV`, `MOV`, `WEBM`, `3GP`
+- **ورودی مستقیم از دو طریق**:
+  - **انتخاب فایل از حافظه گوشی**: فایل‌های ضبط‌شده، جلسات، دوره‌های آموزشی یا پادکست‌ها را مستقیماً انتخاب کنید.
+  - **لینک مستقیم اینترنتی**: کافیست لینک فایل صوتی یا ویدیویی در وب را وارد کنید تا برنامه آن را مستقیماً دانلود و پردازش کند.
+- **دو حالت عملکرد مستقل**:
+  1. **فقط تبدیل گفتار به متن (Speech to Text Only)**: استخراج کامل متن صحبت‌ها به همراه پیش‌نمایش دیالوگ، شمارنده کلمات/کاراکترها و دکمه کپی سریع با یک لمس.
+  2. **استخراج و خلاصه‌سازی (Transcribe & Summarize)**: پیاده‌سازی متن صحبت‌ها و خلاصه‌سازی هوشمند بلافاصله پس از پیاده‌سازی در قالب یک گزارش تحلیلی.
+- **پردازش بدون محدودیت زمانی رسانه‌های طولانی**:
+  - پادکست‌ها، سمینارها و ویدیوهای چندین ساعته به‌صورت خودکار و هوشمند به بخش‌های متوالی شکسته شده و بدون خطای تایم‌اوت کلودفلر پیاده‌سازی می‌شوند.
+- **محافظ هوشمند زبان فارسی (Anti-Hallucination Guard)**:
+  - استفاده از الگوریتم اختصاصی برای مهار حلقه‌های توهم (Hallucination) مدل Whisper در زبان فارسی جهت تضمین پیاده‌سازی فوق‌العاده تمیز و روان.
+- **انتخاب مدل ویسپر در تنظیمات**:
+  - انتخاب بین مدل فوق‌سریع `@cf/openai/whisper-large-v3-turbo` و مدل استاندارد `@cf/openai/whisper`.
 
 ---
 
-## 🔄 Dual-Tier Auto-Rotation Engine
-
-```
-[Start Summarization]
-         │
-         ▼
-[Select Highest-Priority Active Model (e.g. Gemma 4 26B)]
-         │
-         ▼
-[Select Active Cloudflare Key (Token + Account ID)]
-         │
-         ▼
-[Check Account Quota Cooldown] ──(Cooldown Active)──► [Try Next Key]
-         │
-     (Available)
-         ▼
-[Execute Cloudflare Workers AI Request]
-         │
- ┌───────┴───────────────────────┬────────────────────────┬──────────────────────┐
- │ (HTTP 200 OK)                 │ (HTTP 429 Rate Limit)  │ (HTTP 401/403/404)   │ (All Keys Exhausted on Model)
- ▼                               ▼                        ▼                      ▼
-[Return Success]        [Set Cooldown for Acc]       [Mark Key Invalid]     [Failover to Next Prioritized Model]
-                                 │                        │                      │
-                                 ▼                        ▼                      ▼
-                        [Try Next Account]           [Try Next Key]         [Qwen 3.8 / GPT-OSS / Llama 3.3]
-```
+### 🧠 خلاصه‌سازی هوشمند با ۴ مدل پرچمدار هوش مصنوعی
+برنامه از ۴ مدل برتر هوش مصنوعی روی Cloudflare Workers AI بهره می‌برد:
+1. **Google Gemma 4 26B A4B IT**: فوق‌العاده سریع (~۳۰ ثانیه)، با درک زبان فارسی عمیق و انشای طبیعی و حرفه‌ای.
+2. **Alibaba Qwen 3.8 27B**: دقت تحلیلی بسیار بالا در درک متون پیچیده، گزارش‌های اداری و اسناد تخصصی چندزبانه.
+3. **OpenAI GPT-OSS 120B**: مدل پرچمدار ۱۱۷ میلیارد پارامتری بر پایه معماری MoE برای تحلیل عمیق و استنتاج‌های ساختاریافته.
+4. **Meta Llama 3.3 70B Fast**: سرعت عمل بالا با نسخه بهینه‌سازی‌شده FP8 برای خلاصه‌سازی سریع مقالات.
 
 ---
 
-## 📄 License & Attribution
+### 📚 خلاصه‌سازی اسناد، متون طولانی و صفحات وب
+- **دریافت انواع اسناد**: پشتیبانی مستقیم از اسناد متنی و اداری شامل `PDF`, `DOCX` (Word), `TXT`, `Markdown`, `CSV`.
+- **استخراج از لینک صفحات اینترنتی**: با وارد کردن آدرس یک وب‌سایت یا خبرگزاری، برنامه متن اصلی مقاله را بدون تبلیغات و بخش‌های اضافی استخراج کرده و خلاصه می‌کند.
+- **معماری خلاصه‌سازی سلسله‌مراتبی (Hierarchical Context)**:
+  - متون بسیار طولانی و کتاب‌ها به بخش‌های هم‌پوشان با حفظ ۲۵۰ کلمه زمینه مشترک تقسیم می‌شوند؛ بنابراین هیچ نکته‌ای قطع نمی‌شود و رشته افکار متن پیوسته باقی می‌ماند.
 
-Distributed under the Apache 2.0 License. See [LICENSE](LICENSE) for more information.
+---
+
+### 🔄 چرخش هوشمند چند حسابه (Multi-Account Rotation)
+- **استفاده کاملاً رایگان و پایدار**: کلودفلر روزانه ۱۰,۰۰۰ واحد محاسباتی (Neurons) رایگان برای هر اکانت ارائه می‌دهد (معادل بیش از ۲۱۰ دقیقه تبدیل صوت به متن رایگان در روز به ازای هر حساب).
+- **اتصال چند اکانت**: می‌توانید چندین حساب مختلف کلودفلر به برنامه متصل کنید. در صورت اتمام سهمیه روزانه یا خطای محدودیت نرخ (Rate Limit 429)، نرم‌افزار بدون توقف کار به اکانت بعدی سوئیچ می‌کند.
+- **مدیریت اولویت مدل‌ها**: امکان تغییر ترتیب اولویت مدل‌های خلاصه‌ساز و فعال/غیرفعال کردن هر مدل بر اساس نیاز.
+
+---
+
+### 📝 خروجی حرفه‌ای و مدیریت تاریخچه
+- **خروجی چندصفحه‌ای PDF**: تولید فایل PDF زیبا و استاندارد با چیدمان راست‌به‌چپ (RTL) برای زبان فارسی و عربی.
+- **خروجی ورد (DOCX)**: خروجی فایل Word ساختاریافته با تیترها، نکات برجسته و فرمت‌بندی رسمی.
+- **خروجی Markdown و TXT**: ذخیره سریع در فرمت‌های پرکاربرد متنی.
+- **تاریخچه جستجوپذیر**: دسترسی همیشگی به تمام خلاصه‌ها و متون استخراج‌شده قبلی با امکان جستجو، بازبینی و اشتراک‌گذاری.
+
+---
+
+### 🔒 امنیت و حریم خصوصی کامل
+- **رمزنگاری سخت‌افزاری**: توکن‌های دسترسی API با الگوریتم قدرتمند **AES-256-GCM** درون Android Keystore گوشی ذخیره می‌شوند.
+- **بدون لاگ و سرور واسط**: کلیه ارتباطات به صورت مستقیم میان گوشی شما و سرورهای امن کلودفلر برقرار می‌شود و هیچ سرور میانی یا سیستم ردیابی وجود ندارد.
+
+---
+
+### 🎨 رابط کاربری مدرن (Material 3)
+- طراحی کامپوز (Jetpack Compose) مدرن و روان.
+- پشتیبانی کامل از حالت تاریک (Dark Mode) و روشن (Light Mode).
+- چیدمان استاندارد راست‌به‌چپ (RTL) متناسب با زبان فارسی.
+- نمایش درصد پیشرفت لحظه‌ای مراحل استخراج، دانلود، پیاده‌سازی صوت و خلاصه‌سازی متن.
+
+---
+
+## 📱 راهنمای کاربری سریع
+
+### ۱. پیاده‌سازی و خلاصه‌سازی صوت یا ویدیو
+1. در تب **خانه (Home)**، روی دکمه **رسانه (صوت / ویدیو)** ضربه بزنید و فایل مورد نظر را انتخاب کنید، یا لینک مستقیم فایل را در کادر متن وارد نمایید.
+2. کارت رسانه متصل‌شده با اطلاعات نوع فایل ظاهر می‌شود.
+3. یکی از دو گزینه را انتخاب کنید:
+   - **تبدیل گفتار به متن**: متن صحبت‌ها پیاده‌سازی شده و در کادر پیش‌نمایش به همراه دکمه کپی نمایش داده می‌شود.
+   - **شروع استخراج و خلاصه‌سازی**: ابتدا صوت به متن تبدیل شده و سپس متن حاصل مستقیماً خلاصه‌سازی می‌شود.
+
+### ۲. اتصال حساب‌های کلودفلر
+1. به تب **حساب‌ها (Accounts)** بروید.
+2. شناسه اکانت (**Account ID**) و توکن دسترسی (**API Token**) ایجادشده در کلودفلر با دسترسی Workers AI را ثبت کنید.
+3. می‌توانید چند اکانت اضافه کنید تا برنامه خودکار بین آنها سوییچ کند.
+
+---
+
+## 📄 مجوز انتشار (License)
+
+این پروژه تحت مجوز آپاچی ۲.۰ منتشر شده است. برای اطلاعات بیشتر فایل [LICENSE](LICENSE) را مطالعه کنید.
