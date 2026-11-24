@@ -27,13 +27,11 @@ By managing multiple Cloudflare accounts with automatic quota rotation, Gemini S
   - **Local Device Files**: Select voice memos, lecture recordings, podcasts, or video clips directly through the Android Storage Access Framework.
   - **Remote Media URLs**: Paste any direct audio or video link to automatically download, extract, and process the media stream.
 - **Two Independent Execution Modes**:
-  1. **Speech to Text Only**: Transcribes spoken dialogue into readable text, complete with word and character counters, and an instant 1-click clipboard copy button.
+  1. **Transcript Only**: Transcribes spoken dialogue into readable text, complete with word and character counters, and an instant 1-click clipboard copy button.
   2. **Transcribe & Summarize**: Transcribes audio and immediately feeds the resulting transcript into the AI summarization engine for an executive briefing.
-- **Unlimited Duration with Intelligent Chunking**:
-  - Automatically slices long-form recordings (podcasts, webinars, multi-hour meetings) into sequential ~200-second segments, preventing edge execution timeouts and bypassing payload size limits.
-- **Hardware-Accelerated Audio Extraction**:
-  - Utilizes native Android `MediaExtractor` and `MediaMuxer` to demux audio tracks from video files without CPU re-encoding overhead.
-  - Fallback `MediaCodec` PCM decoder outputs clean 16kHz mono audio for optimal speech recognition.
+- **Ultra-Compact Compression & Concurrent Processing**:
+  - Automatically compresses long audio and video tracks into ultra-lightweight **16kHz Mono AAC (32 kbps)** (~240 KB per minute) and slices long recordings into compact **10-minute segments** (~2.4 MB each).
+  - Dispatches audio segments **concurrently** across all configured active Cloudflare accounts for blazingly fast turnaround on multi-hour files.
 - **Hallucination Prevention**:
   - Employs dynamic prompt suppression during multilingual decoding to eliminate repetitive hallucination loops.
 - **Whisper Model Selection**:

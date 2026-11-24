@@ -2,6 +2,7 @@ package com.gemini.summarizer.core.media
 
 import android.content.Context
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -40,14 +41,20 @@ data class PreparedMedia(
 class MediaAudioExtractor(private val context: Context) {
 
     companion object {
-        // Cloudflare Whisper recommended duration per chunk is 200s (3m 20s).
-        // This ensures high accuracy, small payload size (~3MB MP3 / ~6.4MB WAV), and fast edge processing.
-        const val CHUNK_TARGET_DURATION_SEC = 200.0f
-        const val MAX_SINGLE_PASS_DURATION_SEC = 260.0f
-        const val MAX_SINGLE_PASS_BYTES = 20 * 1024 * 1024 // 20 MB
+        // Compressed speech settings: 16kHz Mono AAC-LC at 32 kbps (~240 KB per minute).
+        // With compressed payloads (~2.4 MB per 10-min chunk), 10-minute slices easily fit within
+        // Cloudflare Workers AI request bounds while enabling fast multi-account parallel execution.
+        const val TARGET_SAMPLE_RATE = 16000
+        const val TARGET_CHANNELS = 1
+        const val TARGET_AAC_BITRATE = 32_000 // 32 kbps
+        const val COMPRESSED_CHUNK_DURATION_SEC = 600.0f // 10 minutes per compressed chunk
 
-        const val TARGET_SAMPLE_RATE = 16000 // Whisper standard rate
-        const val TARGET_CHANNELS = 1        // Mono
+        // Fallback chunk duration for uncompressed audio tracks (MP3/WAV)
+        const val CHUNK_TARGET_DURATION_SEC = 240.0f
+
+        // Bypass compression/slicing only if source is already compact audio under 10 min and <= 4 MB
+        const val MAX_SINGLE_PASS_DURATION_SEC = 600.0f
+        const val MAX_SINGLE_PASS_BYTES = 4 * 1024 * 1024 // 4 MB
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -231,11 +238,9 @@ class MediaAudioExtractor(private val context: Context) {
     }
 
     /**
-     * Slices media into ~200s audio chunks using tiered high-speed strategies:
-     * 1. Direct MP3 frame slicing (< 0.5s for any length, zero PCM re-encoding).
-     * 2. Direct WAV frame slicing (< 0.2s, zero PCM re-encoding).
-     * 3. Direct AAC/M4A muxing via MediaMuxer (1-2s for MP4/M4A without re-encoding).
-     * 4. Universal fast streaming MediaCodec decoder with buffered downsampling to 16kHz WAV.
+     * Compresses media audio into ultra-lightweight 16kHz Mono AAC (.m4a, 32 kbps) via
+     * MediaExtractor + MediaCodec (Decoder & AAC Encoder) + MediaMuxer, then slices into
+     * 10-minute chunks (~2.4 MB each). Falls back cleanly to direct stream slicing or WAV decoding.
      */
     private suspend fun sliceMediaIntoChunks(
         inputFile: File,
@@ -243,14 +248,51 @@ class MediaAudioExtractor(private val context: Context) {
         onProgress: ((String) -> Unit)?
     ): Result<List<AudioChunk>> = withContext(Dispatchers.IO) {
         val chunks = mutableListOf<AudioChunk>()
-        val totalChunks = Math.max(1, Math.ceil((durationSec / CHUNK_TARGET_DURATION_SEC).toDouble()).toInt())
+        val compressedTotalChunks = Math.max(1, Math.ceil((durationSec / COMPRESSED_CHUNK_DURATION_SEC).toDouble()).toInt())
 
+        // Primary Strategy: Compress to 16kHz Mono AAC (32 kbps) -> 10-minute chunks (~2.4 MB each)
+        onProgress?.invoke("Compressing audio to 16kHz Mono AAC (32 kbps)...")
+        val compressedFile = transcodeToCompressedAac(inputFile, durationSec, onProgress)
+        if (compressedFile != null && compressedFile.exists() && compressedFile.length() > 512) {
+            val compressedSizeMb = String.format(java.util.Locale.US, "%.1f", compressedFile.length() / (1024.0 * 1024.0))
+            onProgress?.invoke("Compressed audio ready ($compressedSizeMb MB total). Preparing ${compressedTotalChunks}-part layout...")
+
+            if (durationSec in 0.1f..COMPRESSED_CHUNK_DURATION_SEC && compressedFile.length() <= 10 * 1024 * 1024) {
+                return@withContext Result.success(
+                    listOf(
+                        AudioChunk(
+                            file = compressedFile,
+                            index = 1,
+                            totalChunks = 1,
+                            startSeconds = 0f,
+                            durationSeconds = durationSec
+                        )
+                    )
+                )
+            }
+
+            val compressedSliced = tryDirectMuxingChunks(
+                inputFile = compressedFile,
+                totalDurationSec = durationSec,
+                chunkDurationSec = COMPRESSED_CHUNK_DURATION_SEC,
+                outChunks = chunks,
+                onProgress = onProgress
+            )
+            compressedFile.delete()
+            if (compressedSliced && chunks.isNotEmpty()) {
+                return@withContext Result.success(chunks)
+            }
+            chunks.forEach { it.file.delete() }
+            chunks.clear()
+        }
+
+        val fallbackTotalChunks = Math.max(1, Math.ceil((durationSec / CHUNK_TARGET_DURATION_SEC).toDouble()).toInt())
         val ext = inputFile.extension.lowercase()
 
-        // Strategy 1: Direct fast slicing for MP3 files (< 0.5s)
+        // Fallback 1: Direct fast slicing for MP3 files
         if (ext == "mp3") {
-            onProgress?.invoke("Fast-slicing MP3 audio stream into $totalChunks parts...")
-            val mp3Success = tryDirectMp3Chunking(inputFile, durationSec, totalChunks, chunks, onProgress)
+            onProgress?.invoke("Fast-slicing MP3 audio stream into $fallbackTotalChunks parts...")
+            val mp3Success = tryDirectMp3Chunking(inputFile, durationSec, fallbackTotalChunks, chunks, onProgress)
             if (mp3Success && chunks.isNotEmpty()) {
                 return@withContext Result.success(chunks)
             }
@@ -258,10 +300,10 @@ class MediaAudioExtractor(private val context: Context) {
             chunks.clear()
         }
 
-        // Strategy 2: Direct fast slicing for WAV files (< 0.2s)
+        // Fallback 2: Direct fast slicing for WAV files
         if (ext == "wav") {
-            onProgress?.invoke("Fast-slicing WAV audio stream into $totalChunks parts...")
-            val wavSuccess = tryDirectWavChunking(inputFile, durationSec, totalChunks, chunks, onProgress)
+            onProgress?.invoke("Fast-slicing WAV audio stream into $fallbackTotalChunks parts...")
+            val wavSuccess = tryDirectWavChunking(inputFile, durationSec, fallbackTotalChunks, chunks, onProgress)
             if (wavSuccess && chunks.isNotEmpty()) {
                 return@withContext Result.success(chunks)
             }
@@ -269,22 +311,304 @@ class MediaAudioExtractor(private val context: Context) {
             chunks.clear()
         }
 
-        // Strategy 3: Direct MediaMuxer extraction (M4A/AAC tracks in MP4, M4A, MKV)
-        val muxerSuccess = tryDirectMuxingChunks(inputFile, durationSec, totalChunks, chunks, onProgress)
+        // Fallback 3: Direct MediaMuxer extraction (M4A/AAC tracks in MP4, M4A, MKV)
+        val muxerSuccess = tryDirectMuxingChunks(
+            inputFile = inputFile,
+            totalDurationSec = durationSec,
+            chunkDurationSec = CHUNK_TARGET_DURATION_SEC,
+            outChunks = chunks,
+            onProgress = onProgress
+        )
         if (muxerSuccess && chunks.isNotEmpty()) {
             return@withContext Result.success(chunks)
         }
         chunks.forEach { it.file.delete() }
         chunks.clear()
 
-        // Strategy 4: High-speed streaming MediaCodec decoder (decodes directly to WAV chunks in memory)
+        // Fallback 4: High-speed streaming MediaCodec decoder to 16kHz mono WAV
         onProgress?.invoke("Extracting audio using native media decoder...")
-        val codecSuccess = tryStreamingCodecChunks(inputFile, durationSec, totalChunks, chunks, onProgress)
+        val codecSuccess = tryStreamingCodecChunks(inputFile, durationSec, fallbackTotalChunks, chunks, onProgress)
         if (codecSuccess && chunks.isNotEmpty()) {
             return@withContext Result.success(chunks)
         }
 
         Result.failure(Exception("Unable to decode or extract audio track from this media."))
+    }
+
+    /**
+     * Transcodes any audio or video audio track into ultra-lightweight 16kHz Mono AAC-LC (32 kbps) .m4a.
+     * Reduces file size by 80-95% (~240 KB per minute) while preserving clean speech clarity for Whisper.
+     */
+    private fun transcodeToCompressedAac(
+        inputFile: File,
+        totalDurationSec: Float,
+        onProgress: ((String) -> Unit)?
+    ): File? {
+        var extractor: MediaExtractor? = null
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        var muxer: MediaMuxer? = null
+        var muxerStarted = false
+
+        val outFile = File(cacheDir, "compressed_${UUID.randomUUID().toString().take(8)}.m4a")
+
+        try {
+            extractor = MediaExtractor()
+            extractor.setDataSource(inputFile.absolutePath)
+
+            var audioTrackIndex = -1
+            var inputFormat: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val fmt = extractor.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    inputFormat = fmt
+                    break
+                }
+            }
+
+            if (audioTrackIndex == -1 || inputFormat == null) return null
+
+            val inputMime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return null
+            decoder = MediaCodec.createDecoderByType(inputMime)
+            decoder.configure(inputFormat, null, null, 0)
+            decoder.start()
+
+            extractor.selectTrack(audioTrackIndex)
+
+            val encFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_AAC,
+                TARGET_SAMPLE_RATE,
+                TARGET_CHANNELS
+            ).apply {
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, TARGET_AAC_BITRATE)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 32768)
+            }
+
+            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            var muxerTrackIndex = -1
+
+            var srcSampleRate = if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            } else 44100
+            var srcChannels = if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            } else 2
+
+            val decInfo = MediaCodec.BufferInfo()
+            val encInfo = MediaCodec.BufferInfo()
+
+            var extractorEOS = false
+            var decoderEOS = false
+            var encoderInputDone = false
+            var encoderEOS = false
+
+            var resamplePos = 0.0
+            var totalMonoSamplesFed = 0L
+            var lastReportPercent = -1
+
+            val pcmQueue = ByteArray(65536)
+            var pcmQueueSize = 0
+            val timeoutUs = 5000L
+
+            fun drainEncoder() {
+                while (true) {
+                    val encOutIdx = encoder.dequeueOutputBuffer(encInfo, 0L)
+                    when {
+                        encOutIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                        encOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            if (!muxerStarted) {
+                                muxerTrackIndex = muxer.addTrack(encoder.outputFormat)
+                                muxer.start()
+                                muxerStarted = true
+                            }
+                        }
+                        encOutIdx >= 0 -> {
+                            val encodedBuf = encoder.getOutputBuffer(encOutIdx)
+                            if (encodedBuf != null) {
+                                if ((encInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                    encInfo.size = 0
+                                }
+                                if (encInfo.size > 0 && muxerStarted) {
+                                    encodedBuf.position(encInfo.offset)
+                                    encodedBuf.limit(encInfo.offset + encInfo.size)
+                                    muxer.writeSampleData(muxerTrackIndex, encodedBuf, encInfo)
+                                }
+                            }
+                            encoder.releaseOutputBuffer(encOutIdx, false)
+                            if ((encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encoderEOS = true
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
+            fun flushPcmQueueToEncoder(endOfInput: Boolean) {
+                var offset = 0
+                while (offset < pcmQueueSize) {
+                    val encInIdx = encoder.dequeueInputBuffer(timeoutUs)
+                    if (encInIdx >= 0) {
+                        val encInBuf = encoder.getInputBuffer(encInIdx)
+                        if (encInBuf != null) {
+                            encInBuf.clear()
+                            val toWrite = Math.min(encInBuf.remaining(), pcmQueueSize - offset)
+                            val alignedWrite = toWrite and 0xFFFFFFFE.toInt()
+                            if (alignedWrite > 0) {
+                                encInBuf.put(pcmQueue, offset, alignedWrite)
+                                val ptsUs = (totalMonoSamplesFed * 1_000_000L) / TARGET_SAMPLE_RATE
+                                totalMonoSamplesFed += (alignedWrite / 2)
+                                encoder.queueInputBuffer(encInIdx, 0, alignedWrite, ptsUs, 0)
+                                offset += alignedWrite
+                            } else {
+                                encoder.queueInputBuffer(encInIdx, 0, 0, 0L, 0)
+                            }
+                        }
+                    } else {
+                        drainEncoder()
+                    }
+                }
+                pcmQueueSize = 0
+
+                if (endOfInput && !encoderInputDone) {
+                    while (true) {
+                        val encInIdx = encoder.dequeueInputBuffer(timeoutUs)
+                        if (encInIdx >= 0) {
+                            val ptsUs = (totalMonoSamplesFed * 1_000_000L) / TARGET_SAMPLE_RATE
+                            encoder.queueInputBuffer(encInIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            encoderInputDone = true
+                            break
+                        } else {
+                            drainEncoder()
+                        }
+                    }
+                }
+                drainEncoder()
+            }
+
+            while (!encoderEOS) {
+                if (!extractorEOS) {
+                    val decInIdx = decoder.dequeueInputBuffer(timeoutUs)
+                    if (decInIdx >= 0) {
+                        val decInBuf = decoder.getInputBuffer(decInIdx)
+                        if (decInBuf != null) {
+                            val sampleSize = extractor.readSampleData(decInBuf, 0)
+                            if (sampleSize < 0) {
+                                decoder.queueInputBuffer(decInIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                extractorEOS = true
+                            } else {
+                                decoder.queueInputBuffer(decInIdx, 0, sampleSize, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
+                }
+
+                if (!decoderEOS) {
+                    val decOutIdx = decoder.dequeueOutputBuffer(decInfo, timeoutUs)
+                    when {
+                        decOutIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            val newFmt = decoder.outputFormat
+                            srcSampleRate = newFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE, 44100)
+                            srcChannels = newFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 2)
+                        }
+                        decOutIdx >= 0 -> {
+                            val outBuf = decoder.getOutputBuffer(decOutIdx)
+                            if (outBuf != null && decInfo.size > 0) {
+                                outBuf.position(decInfo.offset)
+                                outBuf.limit(decInfo.offset + decInfo.size)
+                                outBuf.order(ByteOrder.LITTLE_ENDIAN)
+
+                                val step = srcSampleRate.toDouble() / TARGET_SAMPLE_RATE.toDouble()
+                                val safeChannels = Math.max(1, srcChannels)
+                                val frameSize = safeChannels * 2
+                                val frames = decInfo.size / frameSize
+
+                                for (f in 0 until frames) {
+                                    resamplePos += 1.0
+                                    if (resamplePos >= step) {
+                                        resamplePos -= step
+
+                                        val sampleVal: Short = if (safeChannels == 1) {
+                                            outBuf.short
+                                        } else {
+                                            var sum = 0L
+                                            for (ch in 0 until safeChannels) {
+                                                sum += outBuf.short.toLong()
+                                            }
+                                            (sum / safeChannels).toShort()
+                                        }
+
+                                        if (pcmQueueSize + 2 > pcmQueue.size) {
+                                            flushPcmQueueToEncoder(endOfInput = false)
+                                        }
+                                        pcmQueue[pcmQueueSize++] = (sampleVal.toInt() and 0xFF).toByte()
+                                        pcmQueue[pcmQueueSize++] = ((sampleVal.toInt() shr 8) and 0xFF).toByte()
+                                    } else {
+                                        for (ch in 0 until safeChannels) {
+                                            outBuf.short
+                                        }
+                                    }
+                                }
+
+                                if (totalDurationSec > 0f) {
+                                    val curSec = decInfo.presentationTimeUs / 1_000_000f
+                                    val percent = Math.min(99, ((curSec / totalDurationSec) * 100).toInt())
+                                    if (percent >= lastReportPercent + 10) {
+                                        lastReportPercent = percent
+                                        onProgress?.invoke("Compressing audio to 16kHz Mono AAC: $percent%...")
+                                    }
+                                }
+                            }
+
+                            decoder.releaseOutputBuffer(decOutIdx, false)
+
+                            if ((decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                decoderEOS = true
+                                flushPcmQueueToEncoder(endOfInput = true)
+                            } else if (pcmQueueSize >= 4096) {
+                                flushPcmQueueToEncoder(endOfInput = false)
+                            }
+                        }
+                    }
+                } else {
+                    if (!encoderInputDone) {
+                        flushPcmQueueToEncoder(endOfInput = true)
+                    } else {
+                        drainEncoder()
+                    }
+                }
+            }
+
+            if (muxerStarted) {
+                muxer.stop()
+                muxerStarted = false
+            }
+            muxer.release()
+            muxer = null
+
+            if (outFile.exists() && outFile.length() > 1024) {
+                return outFile
+            }
+            outFile.delete()
+            return null
+        } catch (e: Exception) {
+            try { outFile.delete() } catch (ignored: Exception) {}
+            return null
+        } finally {
+            try { if (muxerStarted) muxer?.stop() } catch (ignored: Exception) {}
+            try { muxer?.release() } catch (ignored: Exception) {}
+            try { encoder?.stop(); encoder?.release() } catch (ignored: Exception) {}
+            try { decoder?.stop(); decoder?.release() } catch (ignored: Exception) {}
+            try { extractor?.release() } catch (ignored: Exception) {}
+        }
     }
 
     /**
@@ -597,11 +921,12 @@ class MediaAudioExtractor(private val context: Context) {
 
     /**
      * Slices AAC tracks from video or M4A containers directly via MediaMuxer (zero re-encoding).
+     * Automatically absorbs trailing segments shorter than 30s into the final chunk.
      */
     private fun tryDirectMuxingChunks(
         inputFile: File,
         totalDurationSec: Float,
-        totalChunks: Int,
+        chunkDurationSec: Float,
         outChunks: MutableList<AudioChunk>,
         onProgress: ((String) -> Unit)?
     ): Boolean {
@@ -631,75 +956,116 @@ class MediaAudioExtractor(private val context: Context) {
                 return false
             }
 
+            val trackDurationSec = if (audioFormat.containsKey(MediaFormat.KEY_DURATION)) {
+                val durUs = audioFormat.getLong(MediaFormat.KEY_DURATION)
+                if (durUs > 0) durUs / 1_000_000f else totalDurationSec
+            } else totalDurationSec
+
+            val effectiveDuration = if (trackDurationSec > 0f) trackDurationSec else totalDurationSec
+            if (effectiveDuration <= 0f) return false
+
+            // Pre-compute slice boundaries (absorbing tiny < 30s tails into the previous chunk)
+            val slices = mutableListOf<Pair<Float, Float>>()
+            var cursorSec = 0f
+            while (cursorSec < effectiveDuration) {
+                var endSec = Math.min(effectiveDuration, cursorSec + chunkDurationSec)
+                if (effectiveDuration - endSec < 30.0f) {
+                    endSec = effectiveDuration
+                }
+                slices.add(cursorSec to endSec)
+                if (endSec >= effectiveDuration) break
+                cursorSec = endSec
+            }
+
+            val totalSlices = slices.size
             val maxBufferSize = if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+                Math.max(256 * 1024, audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
             } else 256 * 1024
 
             val buffer = ByteBuffer.allocate(maxBufferSize)
             val bufferInfo = MediaCodec.BufferInfo()
 
-            for (chunkIdx in 0 until totalChunks) {
-                val chunkStartSec = chunkIdx * CHUNK_TARGET_DURATION_SEC
-                val chunkEndSec = Math.min(totalDurationSec, (chunkIdx + 1) * CHUNK_TARGET_DURATION_SEC)
+            for ((chunkIdx, slice) in slices.withIndex()) {
+                val chunkStartSec = slice.first
+                val chunkEndSec = slice.second
                 val chunkDuration = chunkEndSec - chunkStartSec
 
-                onProgress?.invoke("Extracting audio chunk ${chunkIdx + 1} of $totalChunks...")
+                onProgress?.invoke("Packaging compressed audio part ${chunkIdx + 1} of $totalSlices...")
 
                 val chunkFile = File(cacheDir, "chunk_${UUID.randomUUID().toString().take(8)}_${chunkIdx + 1}.m4a")
-                val muxer = MediaMuxer(chunkFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                val muxerAudioTrack = muxer.addTrack(audioFormat)
-                muxer.start()
+                var muxer: MediaMuxer? = null
+                var muxerStarted = false
 
-                extractor.unselectTrack(audioTrackIndex)
-                extractor.selectTrack(audioTrackIndex)
-                extractor.seekTo((chunkStartSec * 1_000_000).toLong(), MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                try {
+                    muxer = MediaMuxer(chunkFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                    val muxerAudioTrack = muxer.addTrack(audioFormat)
+                    muxer.start()
+                    muxerStarted = true
 
-                val startUs = (chunkStartSec * 1_000_000).toLong()
-                val endUs = (chunkEndSec * 1_000_000).toLong()
+                    extractor.unselectTrack(audioTrackIndex)
+                    extractor.selectTrack(audioTrackIndex)
+                    extractor.seekTo((chunkStartSec * 1_000_000).toLong(), MediaExtractor.SEEK_TO_CLOSEST_SYNC)
 
-                var samplesWritten = 0
-                var firstSampleUs = -1L
+                    val startUs = (chunkStartSec * 1_000_000).toLong()
+                    val endUs = (chunkEndSec * 1_000_000).toLong()
 
-                while (true) {
-                    val sampleTime = extractor.sampleTime
-                    if (sampleTime < 0 || sampleTime > endUs) break
+                    var samplesWritten = 0
+                    var firstSampleUs = -1L
 
-                    if (sampleTime >= startUs) {
-                        if (firstSampleUs < 0) firstSampleUs = sampleTime
+                    while (true) {
+                        val sampleTime = extractor.sampleTime
+                        if (sampleTime < 0 || sampleTime > endUs) break
 
-                        bufferInfo.offset = 0
-                        bufferInfo.size = extractor.readSampleData(buffer, 0)
-                        if (bufferInfo.size < 0) break
+                        if (sampleTime >= startUs) {
+                            if (firstSampleUs < 0) firstSampleUs = sampleTime
 
-                        bufferInfo.presentationTimeUs = Math.max(0L, sampleTime - firstSampleUs)
-                        bufferInfo.flags = extractor.sampleFlags
-                        muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
-                        samplesWritten++
+                            bufferInfo.offset = 0
+                            bufferInfo.size = extractor.readSampleData(buffer, 0)
+                            if (bufferInfo.size < 0) break
+
+                            bufferInfo.presentationTimeUs = Math.max(0L, sampleTime - firstSampleUs)
+                            bufferInfo.flags = extractor.sampleFlags
+                            muxer.writeSampleData(muxerAudioTrack, buffer, bufferInfo)
+                            samplesWritten++
+                        }
+
+                        if (!extractor.advance()) break
                     }
 
-                    if (!extractor.advance()) break
-                }
+                    muxer.stop()
+                    muxerStarted = false
+                    muxer.release()
+                    muxer = null
 
-                muxer.stop()
-                muxer.release()
-
-                if (samplesWritten > 0 && chunkFile.length() > 512) {
-                    outChunks.add(
-                        AudioChunk(
-                            file = chunkFile,
-                            index = chunkIdx + 1,
-                            totalChunks = totalChunks,
-                            startSeconds = chunkStartSec,
-                            durationSeconds = chunkDuration
+                    if (samplesWritten > 0 && chunkFile.length() > 512) {
+                        outChunks.add(
+                            AudioChunk(
+                                file = chunkFile,
+                                index = chunkIdx + 1,
+                                totalChunks = totalSlices,
+                                startSeconds = chunkStartSec,
+                                durationSeconds = chunkDuration
+                            )
                         )
-                    )
-                } else {
-                    chunkFile.delete()
-                    return false
+                    } else {
+                        chunkFile.delete()
+                        if (outChunks.isEmpty()) return false
+                        break
+                    }
+                } finally {
+                    try { if (muxerStarted) muxer?.stop() } catch (ignored: Exception) {}
+                    try { muxer?.release() } catch (ignored: Exception) {}
                 }
             }
 
-            return outChunks.size == totalChunks
+            if (outChunks.isNotEmpty()) {
+                val finalCount = outChunks.size
+                for (idx in outChunks.indices) {
+                    outChunks[idx] = outChunks[idx].copy(totalChunks = finalCount)
+                }
+                return true
+            }
+            return false
         } catch (e: Exception) {
             return false
         } finally {
