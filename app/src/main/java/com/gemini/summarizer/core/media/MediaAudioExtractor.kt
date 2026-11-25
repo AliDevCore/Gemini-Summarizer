@@ -313,7 +313,6 @@ class MediaAudioExtractor(private val context: Context) {
         }
 
         val fallbackTotalChunks = Math.max(1, Math.ceil((durationSec / CHUNK_TARGET_DURATION_SEC).toDouble()).toInt())
-        val ext = inputFile.extension.lowercase()
 
         // Fallback 1: Direct fast slicing for MP3 files
         if (ext == "mp3") {
