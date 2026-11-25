@@ -7,15 +7,14 @@ import org.junit.Test
 class SummaryConfigTest {
 
     @Test
-    fun testBuildSystemInstructionPersianLanguage() {
+    fun testBuildSystemInstructionPersianLanguageAndDefaultPrompt() {
         val config = SummaryConfig(
-            targetLanguage = "Persian",
-            summaryLength = "Short",
-            summaryType = "Bullet Points"
+            targetLanguage = "Persian"
         )
         val instruction = config.buildSystemInstruction()
         assertTrue(instruction.contains("Persian (Farsi)"))
-        assertTrue(instruction.contains("bullet points"))
+        assertTrue(instruction.contains("Organize the content into a clear, well-structured format."))
+        assertTrue(instruction.contains("**Bold** key details"))
     }
 
     @Test
@@ -37,8 +36,17 @@ class SummaryConfigTest {
             customPrompt = "Focus exclusively on financial statistics and revenue."
         )
         val instruction = config.buildSystemInstruction()
-        assertTrue(instruction.contains("USER SPECIAL DIRECTIVE"))
         assertTrue(instruction.contains("Focus exclusively on financial statistics and revenue."))
+    }
+
+    @Test
+    fun testBlankCustomPromptFallsBackToDefault() {
+        val config = SummaryConfig(
+            targetLanguage = "English",
+            customPrompt = "   "
+        )
+        val instruction = config.buildSystemInstruction()
+        assertTrue(instruction.contains(SummaryConfig.DEFAULT_PROMPT))
     }
 }
 

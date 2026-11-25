@@ -75,22 +75,6 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                             )
                         }
                     }
-
-                    HorizontalDivider()
-
-                    Text("Default Summary Length", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        listOf("Very Short", "Short", "Medium", "Detailed").forEach { len ->
-                            FilterChip(
-                                selected = uiState.defaultLength == len,
-                                onClick = { viewModel.setDefaultLength(len) },
-                                label = { Text(len) }
-                            )
-                        }
-                    }
                 }
             }
 

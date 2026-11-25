@@ -47,9 +47,7 @@ data class HomeUiState(
     val isTranscribingSpeech: Boolean = false,
     val summaryResult: SummarizationFinalResult? = null,
     val targetLanguage: String = "Auto",
-    val summaryLength: String = "Medium",
-    val summaryType: String = "General",
-    val customPrompt: String = "",
+    val customPrompt: String = SummaryConfig.DEFAULT_PROMPT,
     val errorMessage: String? = null
 )
 
@@ -76,13 +74,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             val defLang = settingsDataStore.defaultLanguageFlow.first()
-            val defLength = settingsDataStore.defaultLengthFlow.first()
-            val defType = settingsDataStore.defaultTypeFlow.first()
+            val savedPrompt = settingsDataStore.customPromptFlow.first()
             _uiState.update {
                 it.copy(
                     targetLanguage = defLang,
-                    summaryLength = defLength,
-                    summaryType = defType
+                    customPrompt = savedPrompt
                 )
             }
         }
@@ -96,16 +92,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(targetLanguage = lang) }
     }
 
-    fun onLengthSelected(length: String) {
-        _uiState.update { it.copy(summaryLength = length) }
-    }
-
-    fun onTypeSelected(type: String) {
-        _uiState.update { it.copy(summaryType = type) }
-    }
-
     fun onCustomPromptChanged(prompt: String) {
         _uiState.update { it.copy(customPrompt = prompt) }
+        viewModelScope.launch {
+            settingsDataStore.setCustomPrompt(prompt)
+        }
+    }
+
+    fun onResetPromptToDefault() {
+        _uiState.update { it.copy(customPrompt = SummaryConfig.DEFAULT_PROMPT) }
+        viewModelScope.launch {
+            settingsDataStore.setCustomPrompt(SummaryConfig.DEFAULT_PROMPT)
+        }
     }
 
     fun onClearInput() {
@@ -367,9 +365,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         val config = SummaryConfig(
             targetLanguage = _uiState.value.targetLanguage,
-            summaryLength = _uiState.value.summaryLength,
-            summaryType = _uiState.value.summaryType,
-            customPrompt = _uiState.value.customPrompt.ifBlank { null }
+            customPrompt = _uiState.value.customPrompt.ifBlank { SummaryConfig.DEFAULT_PROMPT }
         )
 
         summarizationJob = viewModelScope.launch {
@@ -638,7 +634,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             outputWords = summaryResult.outputWords,
                             stepsCount = summaryResult.stepsCount,
                             targetLanguage = config.targetLanguage,
-                            summaryType = config.summaryType
+                            summaryType = "Custom Prompt"
                         )
                     )
                 }

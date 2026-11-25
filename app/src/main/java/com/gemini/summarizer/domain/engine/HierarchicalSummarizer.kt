@@ -96,7 +96,7 @@ class HierarchicalSummarizer(
                 Source text:
                 $trimmed
                 
-                Please produce a comprehensive, beautifully structured, and cohesive summary of the text above following the specified instructions. Preserve all critical arguments, key facts, data points, and takeaways with clear sectioning.
+                Process and rewrite the text above strictly following the language, instructions, and constraints specified in the system prompt.
             """.trimIndent()
 
             return when (val rotationResult = rotationEngine.executeWithAutoRotation(prompt, systemInstruction, null, onProgressUpdate)) {
@@ -226,16 +226,12 @@ class HierarchicalSummarizer(
             
             $combinedSections
             
-            Synthesize these into one cohesive, beautifully organized, and flowing comprehensive final summary.
+            Synthesize these into one cohesive, beautifully organized final output that strictly follows the instructions in the system prompt.
             
             CRITICAL REQUIREMENTS:
-            1. Maintain an unbroken logical thread and seamless coherence from introduction, through structured deep analysis, to final conclusions.
-            2. Do NOT simply concatenate section bullet points. Eliminate cross-section redundancies, resolve narrative references, and produce a harmonious reading flow.
-            3. Structure with clear Markdown headers:
-               - Executive Overview
-               - Core Analysis & Detailed Insights
-               - Evidence, Data & Specific Findings
-               - Final Takeaways & Synthesis
+            1. Maintain an unbroken logical thread and seamless coherence across all parts without cross-section redundancies.
+            2. Do NOT simply concatenate section summaries; merge related points and resolve narrative references cleanly.
+            3. Strictly follow every formatting, structural, and content guideline provided in the Instructions section of the system prompt.
             4. Strictly adhere to the requested language and tone throughout.
         """.trimIndent()
 

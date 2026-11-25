@@ -38,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gemini.summarizer.core.media.AppMediaType
 import com.gemini.summarizer.core.media.MediaHelper
 import com.gemini.summarizer.core.util.MarkdownRenderer
+import com.gemini.summarizer.domain.model.SummaryConfig
 
 class DynamicCreateDocumentContract : ActivityResultContract<Pair<String, String>, Uri?>() {
     override fun createIntent(context: Context, input: Pair<String, String>): Intent {
@@ -290,37 +291,36 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 }
             }
 
-            // Summary Length Configuration
-            Text("Summary Length", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Summarization Prompt Configuration
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val lengths = listOf("Very Short", "Short", "Medium", "Detailed")
-                lengths.forEach { len ->
-                    FilterChip(
-                        selected = uiState.summaryLength.equals(len, ignoreCase = true),
-                        onClick = { viewModel.onLengthSelected(len) },
-                        label = { Text(len) }
-                    )
+                Text("Summarization Prompt", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                if (uiState.customPrompt != SummaryConfig.DEFAULT_PROMPT) {
+                    TextButton(
+                        onClick = { viewModel.onResetPromptToDefault() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Reset Default", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
 
-            // Summary Type Configuration
-            Text("Summary Format", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                val types = listOf("General", "Bullet Points", "Executive Summary", "Key Takeaways", "Academic", "Chapter by Chapter")
-                types.forEach { t ->
-                    FilterChip(
-                        selected = uiState.summaryType.equals(t, ignoreCase = true),
-                        onClick = { viewModel.onTypeSelected(t) },
-                        label = { Text(t) }
-                    )
-                }
-            }
+            OutlinedTextField(
+                value = uiState.customPrompt,
+                onValueChange = { viewModel.onCustomPromptChanged(it) },
+                placeholder = {
+                    Text("Enter custom instructions for summarizing your text...")
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 130.dp, max = 260.dp),
+                shape = MaterialTheme.shapes.medium
+            )
 
             // Extracted Speech Transcript Preview Card (Whisper Result)
             uiState.extractedTranscript?.let { transcript ->

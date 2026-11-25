@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.gemini.summarizer.core.database.AppDatabase
 import com.gemini.summarizer.core.datastore.SettingsDataStore
 import com.gemini.summarizer.core.security.SecurityManager
+import com.gemini.summarizer.domain.model.SummaryConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,8 +17,6 @@ import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val defaultLanguage: String = "Auto",
-    val defaultLength: String = "Medium",
-    val defaultType: String = "General",
     val saveHistory: Boolean = true,
     val saveOriginalText: Boolean = true,
     val whisperModel: String = "@cf/openai/whisper-large-v3-turbo",
@@ -40,16 +39,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch {
-            settingsDataStore.defaultLengthFlow.collectLatest {
-                _uiState.value = _uiState.value.copy(defaultLength = it)
-            }
-        }
-        viewModelScope.launch {
-            settingsDataStore.defaultTypeFlow.collectLatest {
-                _uiState.value = _uiState.value.copy(defaultType = it)
-            }
-        }
-        viewModelScope.launch {
             settingsDataStore.saveHistoryFlow.collectLatest {
                 _uiState.value = _uiState.value.copy(saveHistory = it)
             }
@@ -68,14 +57,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setDefaultLanguage(lang: String) {
         viewModelScope.launch { settingsDataStore.setDefaultLanguage(lang) }
-    }
-
-    fun setDefaultLength(length: String) {
-        viewModelScope.launch { settingsDataStore.setDefaultLength(length) }
-    }
-
-    fun setDefaultType(type: String) {
-        viewModelScope.launch { settingsDataStore.setDefaultType(type) }
     }
 
     fun setSaveHistory(enabled: Boolean) {
@@ -111,8 +92,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 database.modelDao().insertModels(AppDatabase.getDefaultModels())
                 // Reset settings to defaults
                 settingsDataStore.setDefaultLanguage("Auto")
-                settingsDataStore.setDefaultLength("Medium")
-                settingsDataStore.setDefaultType("General")
+                settingsDataStore.setCustomPrompt(SummaryConfig.DEFAULT_PROMPT)
             }
             _uiState.value = _uiState.value.copy(message = "All app databases, settings, and secure keys cleared.")
         }

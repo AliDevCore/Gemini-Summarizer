@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.gemini.summarizer.domain.model.SummaryConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -15,8 +16,6 @@ class SettingsDataStore(private val context: Context) {
     companion object {
         val KEY_AUTO_MODEL_PRIORITY = booleanPreferencesKey("auto_model_priority")
         val KEY_DEFAULT_LANGUAGE = stringPreferencesKey("default_language")
-        val KEY_DEFAULT_LENGTH = stringPreferencesKey("default_length")
-        val KEY_DEFAULT_TYPE = stringPreferencesKey("default_type")
         val KEY_SAVE_HISTORY = booleanPreferencesKey("save_history")
         val KEY_SAVE_ORIGINAL_TEXT = booleanPreferencesKey("save_original_text")
         val KEY_CUSTOM_PROMPT = stringPreferencesKey("custom_prompt")
@@ -31,12 +30,8 @@ class SettingsDataStore(private val context: Context) {
         it[KEY_DEFAULT_LANGUAGE] ?: "Auto"
     }
 
-    val defaultLengthFlow: Flow<String> = context.dataStore.data.map {
-        it[KEY_DEFAULT_LENGTH] ?: "Medium"
-    }
-
-    val defaultTypeFlow: Flow<String> = context.dataStore.data.map {
-        it[KEY_DEFAULT_TYPE] ?: "General"
+    val customPromptFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CUSTOM_PROMPT]?.takeIf { it.isNotBlank() } ?: SummaryConfig.DEFAULT_PROMPT
     }
 
     val saveHistoryFlow: Flow<Boolean> = context.dataStore.data.map {
@@ -59,12 +54,8 @@ class SettingsDataStore(private val context: Context) {
         context.dataStore.edit { it[KEY_DEFAULT_LANGUAGE] = lang }
     }
 
-    suspend fun setDefaultLength(length: String) {
-        context.dataStore.edit { it[KEY_DEFAULT_LENGTH] = length }
-    }
-
-    suspend fun setDefaultType(type: String) {
-        context.dataStore.edit { it[KEY_DEFAULT_TYPE] = type }
+    suspend fun setCustomPrompt(prompt: String) {
+        context.dataStore.edit { it[KEY_CUSTOM_PROMPT] = prompt }
     }
 
     suspend fun setSaveHistory(enabled: Boolean) {
