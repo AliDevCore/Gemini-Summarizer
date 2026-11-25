@@ -29,6 +29,14 @@ class AutoRotationEngine(
 
     companion object {
         private val keyIndexCounter = java.util.concurrent.atomic.AtomicInteger(0)
+        private val THINKING_MODELS = setOf(
+            "@cf/google/gemma-4-26b-a4b-it",
+            "@cf/qwen/qwen3.8-27b"
+        )
+    }
+
+    suspend fun getActiveKeyCount(): Int {
+        return database.apiKeyDao().getAllValidKeys().size.coerceAtLeast(1)
     }
 
     suspend fun executeWithAutoRotation(
@@ -101,8 +109,9 @@ class AutoRotationEngine(
                 onProgressUpdate?.invoke("Querying ${targetModel.displayName} with $accountDisplayName...")
 
                 var retryCount = 0
-                val maxRetries = 2
+                val maxRetries = if (validKeys.size > 1) 1 else 2
                 var callResult: GeminiApiResult<String>
+                val disableThinking = if (THINKING_MODELS.contains(targetModel.id)) false else null
 
                 while (true) {
                     callResult = apiClient.generateContent(
@@ -110,7 +119,8 @@ class AutoRotationEngine(
                         accountId = accountId,
                         apiToken = rawApiKey,
                         prompt = prompt,
-                        systemInstruction = systemInstruction
+                        systemInstruction = systemInstruction,
+                        enableThinking = disableThinking
                     )
 
                     if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {

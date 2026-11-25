@@ -24,12 +24,11 @@ class HierarchicalSummarizer(
 ) {
 
     companion object {
-        // Single pass for documents up to 3,500 words (~10-14 standard pages).
-        // Larger documents transition seamlessly into parallel chunk summarization.
-        const val MAX_WORDS_PER_CHUNK = 3500
-        const val CHUNK_OVERLAP_WORDS = 250
+        // Single pass for documents up to 2,200 words (~8-10 standard pages) for fast 15s edge execution.
+        // Larger documents transition seamlessly into dynamic multi-account parallel chunk summarization.
+        const val MAX_WORDS_PER_CHUNK = 2200
+        const val CHUNK_OVERLAP_WORDS = 200
         const val MAX_SYNTHESIS_INPUT_WORDS = 4000
-        const val MAX_PARALLEL_CHUNKS = 4
     }
 
     suspend fun summarizeFile(
@@ -123,10 +122,11 @@ class HierarchicalSummarizer(
         // 2. High-speed parallel chunk processing for long documents
         val chunks = splitTextIntoSemanticChunks(trimmed, MAX_WORDS_PER_CHUNK, CHUNK_OVERLAP_WORDS)
         val totalSections = chunks.size
-        onProgressUpdate("Distributing $totalSections sections for parallel high-speed processing...")
+        val parallelLimit = rotationEngine.getActiveKeyCount().coerceAtMost(totalSections)
+        onProgressUpdate("Distributing $totalSections sections concurrently across $parallelLimit active Cloudflare accounts...")
 
         val completedCounter = AtomicInteger(0)
-        val semaphore = Semaphore(MAX_PARALLEL_CHUNKS)
+        val semaphore = Semaphore(parallelLimit)
         var lastModelUsed = ""
         var lastAccountUsed = ""
         var lastProjectId = ""
@@ -156,7 +156,8 @@ class HierarchicalSummarizer(
                             val result = rotationEngine.executeWithAutoRotation(
                                 prompt = sectionPrompt,
                                 systemInstruction = systemInstruction,
-                                fileData = null
+                                fileData = null,
+                                onProgressUpdate = onProgressUpdate
                             )
 
                             when (result) {
