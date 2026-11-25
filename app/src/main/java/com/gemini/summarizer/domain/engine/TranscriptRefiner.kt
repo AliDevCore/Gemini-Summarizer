@@ -35,7 +35,8 @@ class TranscriptRefiner(
 ) {
     companion object {
         const val REFINER_MODEL = "@cf/google/gemma-4-26b-a4b-it"
-        private const val MAX_WORDS_PER_BATCH = 1400
+        const val FALLBACK_REFINER_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+        private const val MAX_WORDS_PER_BATCH = 750
         private const val MAX_RETRY_BACKOFF_MS = 10_000L
         private const val TEMPERATURE = 0.1
         private val roundRobinCounter = AtomicInteger(0)
@@ -124,76 +125,83 @@ class TranscriptRefiner(
         val orderedKeys = List(validKeys.size) { i -> validKeys[(startIdx + i) % validKeys.size] }
         val userPrompt = "Proofread and refine the following verbatim speech transcript:\n\n$batchText"
 
-        for (keyEntity in orderedKeys) {
-            val rawApiKey = securityManager.getApiKey(keyEntity.keyIdentifier) ?: continue
-            val accountId = keyEntity.projectId.trim()
-            if (accountId.isBlank()) continue
+        val modelsToTry = listOf(REFINER_MODEL, FALLBACK_REFINER_MODEL)
 
-            val quotaState = database.quotaStateDao().getQuotaState(accountId, REFINER_MODEL)
-            if (quotaState != null && quotaState.isRateLimited && quotaState.cooldownUntilTimestamp > System.currentTimeMillis()) {
-                continue
-            }
+        for (targetModel in modelsToTry) {
+            val disableThinking = if (targetModel == REFINER_MODEL) false else null
 
-            val account = database.accountDao().getAccountById(keyEntity.accountId)
-            val accountDisplayName = account?.name ?: "Account #${keyEntity.id}"
+            for (keyEntity in orderedKeys) {
+                val rawApiKey = securityManager.getApiKey(keyEntity.keyIdentifier) ?: continue
+                val accountId = keyEntity.projectId.trim()
+                if (accountId.isBlank()) continue
 
-            var retryCount = 0
-            val maxRetries = if (validKeys.size > 1) 1 else 2
-            var callResult: GeminiApiResult<String>
-
-            while (true) {
-                callResult = apiClient.generateContent(
-                    modelId = REFINER_MODEL,
-                    accountId = accountId,
-                    apiToken = rawApiKey,
-                    prompt = userPrompt,
-                    systemInstruction = systemInstruction,
-                    temperature = TEMPERATURE
-                )
-
-                if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
-                    retryCount++
-                    val backoff = (1000L * (1 shl retryCount)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
-                    val waitSec = String.format(Locale.US, "%.0f", backoff / 1000.0)
-                    onProgressUpdate?.invoke("Network lag during Gemma 4 refinement on $accountDisplayName. Retrying in ${waitSec}s...")
-                    delay(backoff)
-                } else {
-                    break
+                val quotaState = database.quotaStateDao().getQuotaState(accountId, targetModel)
+                if (quotaState != null && quotaState.isRateLimited && quotaState.cooldownUntilTimestamp > System.currentTimeMillis()) {
+                    continue
                 }
-            }
 
-            when (callResult) {
-                is GeminiApiResult.Success -> {
-                    database.apiKeyDao().updateLastUsed(keyEntity.id, System.currentTimeMillis())
-                    val cleaned = cleanRefinedOutput(callResult.data)
-                    // Ensure Gemma returned complete faithful text rather than truncating/refusing
-                    val origWords = countWords(batchText)
-                    val refinedWords = countWords(cleaned)
-                    if (cleaned.isNotBlank() && (origWords < 20 || refinedWords >= (origWords * 0.45).toInt())) {
-                        return Pair(cleaned, accountDisplayName)
-                    }
-                    return Pair(batchText, accountDisplayName)
-                }
-                is GeminiApiResult.RateLimited -> {
-                    val cooldownSec = callResult.retryAfterSeconds ?: 60L
-                    val cooldownUntil = System.currentTimeMillis() + (cooldownSec * 1000L)
-                    database.quotaStateDao().insertOrUpdate(
-                        QuotaStateEntity(
-                            projectId = accountId,
-                            modelId = REFINER_MODEL,
-                            isRateLimited = true,
-                            cooldownUntilTimestamp = cooldownUntil,
-                            failureReason = callResult.message
-                        )
+                val account = database.accountDao().getAccountById(keyEntity.accountId)
+                val accountDisplayName = account?.name ?: "Account #${keyEntity.id}"
+
+                var retryCount = 0
+                val maxRetries = if (validKeys.size > 1) 1 else 2
+                var callResult: GeminiApiResult<String>
+
+                while (true) {
+                    callResult = apiClient.generateContent(
+                        modelId = targetModel,
+                        accountId = accountId,
+                        apiToken = rawApiKey,
+                        prompt = userPrompt,
+                        systemInstruction = systemInstruction,
+                        temperature = TEMPERATURE,
+                        enableThinking = disableThinking
                     )
+
+                    if (callResult is GeminiApiResult.TransientError && retryCount < maxRetries) {
+                        retryCount++
+                        val backoff = (1000L * (1 shl retryCount)).coerceAtMost(MAX_RETRY_BACKOFF_MS)
+                        val waitSec = String.format(Locale.US, "%.0f", backoff / 1000.0)
+                        onProgressUpdate?.invoke("Network lag during transcript refinement on $accountDisplayName. Retrying in ${waitSec}s...")
+                        delay(backoff)
+                    } else {
+                        break
+                    }
                 }
-                is GeminiApiResult.InvalidKey -> {
-                    database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, callResult.message)
-                }
-                is GeminiApiResult.ModelUnavailable,
-                is GeminiApiResult.TransientError,
-                is GeminiApiResult.RequestError -> {
-                    // Rotate cleanly to next available account
+
+                when (callResult) {
+                    is GeminiApiResult.Success -> {
+                        database.apiKeyDao().updateLastUsed(keyEntity.id, System.currentTimeMillis())
+                        val cleaned = cleanRefinedOutput(callResult.data)
+                        // Ensure the model returned complete faithful text rather than truncating/refusing
+                        val origWords = countWords(batchText)
+                        val refinedWords = countWords(cleaned)
+                        if (cleaned.isNotBlank() && (origWords < 20 || refinedWords >= (origWords * 0.45).toInt())) {
+                            return Pair(cleaned, accountDisplayName)
+                        }
+                        return Pair(batchText, accountDisplayName)
+                    }
+                    is GeminiApiResult.RateLimited -> {
+                        val cooldownSec = callResult.retryAfterSeconds ?: 60L
+                        val cooldownUntil = System.currentTimeMillis() + (cooldownSec * 1000L)
+                        database.quotaStateDao().insertOrUpdate(
+                            QuotaStateEntity(
+                                projectId = accountId,
+                                modelId = targetModel,
+                                isRateLimited = true,
+                                cooldownUntilTimestamp = cooldownUntil,
+                                failureReason = callResult.message
+                            )
+                        )
+                    }
+                    is GeminiApiResult.InvalidKey -> {
+                        database.apiKeyDao().setKeyStatus(keyEntity.id, isInvalid = true, callResult.message)
+                    }
+                    is GeminiApiResult.ModelUnavailable,
+                    is GeminiApiResult.TransientError,
+                    is GeminiApiResult.RequestError -> {
+                        // Rotate cleanly to next available account or fallback model
+                    }
                 }
             }
         }

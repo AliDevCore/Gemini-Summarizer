@@ -63,7 +63,8 @@ class GeminiApiClient {
         apiToken: String,
         prompt: String,
         systemInstruction: String? = null,
-        temperature: Double? = null
+        temperature: Double? = null,
+        enableThinking: Boolean? = null
     ): GeminiApiResult<String> = withContext(Dispatchers.IO) {
         val targetModel = if (modelId.startsWith("@cf/")) modelId else DEFAULT_MODEL
         val cleanAccountId = accountId.trim()
@@ -97,6 +98,11 @@ class GeminiApiClient {
         rootJson.addProperty("max_tokens", 4096)
         if (temperature != null) {
             rootJson.addProperty("temperature", temperature)
+        }
+        if (enableThinking != null) {
+            val kwargs = JsonObject()
+            kwargs.addProperty("enable_thinking", enableThinking)
+            rootJson.add("chat_template_kwargs", kwargs)
         }
 
         val requestBody = rootJson.toString().toRequestBody(jsonMediaType)
